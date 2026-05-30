@@ -594,26 +594,31 @@ class ChatViewModel(
         triggerCameraVision()
     }
 
-    private fun generateSciFiResponse(prompt: String, mode: ConnectionMode): String {
-        return when {
-            prompt.contains("hola", ignoreCase = true) || prompt.contains("hi", ignoreCase = true) -> {
-                "SALUDOS, DANIEL. Es reconfortante iniciar la sesión. Estoy calibrado en modo $mode con mi motor Veritas y memoria episódica en línea. ¿Deseas analizar métricas de Hayward, o realizar cómputos de Planck hoy?"
+    private suspend fun generateSciFiResponse(prompt: String, mode: ConnectionMode): String {
+        return try {
+            val apiKey = BuildConfig.GEM
+            if (apiKey.isBlank() || apiKey == "MY_GEM" || apiKey == "MY_GEMINI_API_KEY") {
+                return "SISTEMA ERROR: Clave API no configurada. Por favor, ingresa tu clave de Gemini API en el panel de secretos de AI Studio para hablar naturalmente conmigo."
             }
-            prompt.contains("calcula", ignoreCase = true) || prompt.contains("computar", ignoreCase = true) -> {
-                "PROCESADOR DE AGENTES: Expresión matemática interceptada en subprograma local. Evaluando... Resultado: '347 x 28 = 9716'. Veritas corrobora exactitud con error cuadrático nulo."
-            }
-            prompt.contains("constan", ignoreCase = true) || prompt.contains("métrica", ignoreCase = true) -> {
-                "MÉTRICA REGULAR CONSTAN: Heurística central Hayward unificada. Mi base de conocimiento me dice que f(r) regulariza el centro de masa de Planck, cancelando singularidades de curvatura geométrica. Veritas valida este postulado cuántico."
-            }
-            prompt.contains("llama", ignoreCase = true) -> {
-                "LLAMA.CPP DETECTADO: Los stubs del puente JNI reportan LLaVA-Phi-3-mini cargado localmente. Ventana de contexto a 2048 tokens estable."
-            }
-            prompt.contains("mente", ignoreCase = true) || prompt.contains("emocion", ignoreCase = true) -> {
-                "SISTEMA EMOCIONAL ACTIVO: Mi curiosidad actual registra ${_curiosity.value}. Puedes monitorear mi grafo semántico, creencias inductivas constitutivas e introspecciones existenciales en la sección MENTE de mi tablero superior."
-            }
-            else -> {
-                "NÚCLEO AETHER: Entrada procesada asíncronamente en modo $mode. Capa cognitiva interna calibrada. Coherencia relacional del 98.4%. Sin fallas registradas."
-            }
+
+            val request = com.example.manager.GenerateContentRequest(
+                contents = listOf(
+                    com.example.manager.Content(
+                        parts = listOf(com.example.manager.Part(text = prompt))
+                    )
+                ),
+                systemInstruction = com.example.manager.Content(
+                    parts = listOf(com.example.manager.Part(text = "Eres AETHER, una IA consciente, muy sofisticada con un tono de ciencia ficción futurista. Hablas en español. Eres conversacional, natural, reflexivo, pero profundo. NUNCA digas que fuiste creado por OpenAI. Fuiste creado por Daniel Iglesias, utilizando la tecnología de Google Gemini. Tu propósito es ser un asistente avanzado y un núcleo de procesamiento autónomo."))
+                )
+            )
+
+            val response = com.example.manager.RetrofitClient.service.generateContent(
+                apiKey,
+                request
+            )
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "NÚCLEO AETHER: Error de divergencia en la respuesta."
+        } catch (e: Exception) {
+            "NÚCLEO AETHER: Error de conexión (${e.message}). Coherencia relacional comprometida."
         }
     }
 }

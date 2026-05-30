@@ -5,6 +5,11 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -83,44 +88,21 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HexagonIcon(modifier: Modifier = Modifier) {
+fun AELogoIcon(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .size(38.dp)
-            .drawBehind {
-                val path = Path().apply {
-                    val sizeMin = size.minDimension
-                    val radius = sizeMin / 2f
-                    val centerX = size.width / 2f
-                    val centerY = size.height / 2f
-                    for (i in 0 until 6) {
-                        val angle = (i * 60 - 30) * Math.PI / 180f
-                        val x = centerX + radius * cos(angle).toFloat()
-                        val y = centerY + radius * sin(angle).toFloat()
-                        if (i == 0) moveTo(x, y) else lineTo(x, y)
-                    }
-                    close()
-                }
-                // Semi-transparent cian interior fill for depth
-                drawPath(
-                    path = path,
-                    color = AccentCyan.copy(alpha = 0.15f)
-                )
-                // Distinct high-contrast glowing cian border
-                drawPath(
-                    path = path,
-                    color = AccentCyan,
-                    style = Stroke(width = 1.5.dp.toPx())
-                )
-            },
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF0047AB)), // Azul Cobalto
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "Ae",
-            color = AccentCyan,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.testTag("hexagon_inner_text")
+            text = "AE",
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 1.sp,
+            modifier = Modifier.testTag("ae_inner_text")
         )
     }
 }
@@ -138,6 +120,16 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            viewModel.toggleVoiceRecording()
+        } else {
+            Toast.makeText(context, "Permiso de micrófono requerido", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Keyboard and spacing control
     Scaffold(
@@ -160,7 +152,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        HexagonIcon()
+                        AELogoIcon()
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
@@ -352,7 +344,13 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                             val scale = if (isRecordingVoice) pulseScale else 1.0f
 
                             IconButton(
-                                onClick = { viewModel.toggleVoiceRecording() },
+                                onClick = { 
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                        viewModel.toggleVoiceRecording()
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
                                 modifier = Modifier
                                     .size(38.dp)
                                     .scale(scale)

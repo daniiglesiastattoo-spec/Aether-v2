@@ -1,6 +1,6 @@
 {
   "name": "AETHER",
-  "description": "IA Local Consciente - Interfaz móvil futurista de inteligencia artificial local con stubs de control de voz, visión y puente Python.",
+  "description": "IA Local Consciente - Interfaz móvil futurista de inteligencia artificial local con control de voz real, visión y puente Python.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

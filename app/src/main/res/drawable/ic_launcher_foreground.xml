@@ -1,12 +1,4 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Glowing Accent Cyan Hexagon -->
-    <path
-        android:strokeColor="#00dcff"
-        android:strokeWidth="3.5"
-        android:fillColor="#1A00dcff"
-        android:pathData="M54,22 L83.5,39 L83.5,73 L54,90 L24.5,73 L24.5,39 Z" />
-</vector>
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ae_cobalt_logo_1779648640134" />
+</layer-list>
