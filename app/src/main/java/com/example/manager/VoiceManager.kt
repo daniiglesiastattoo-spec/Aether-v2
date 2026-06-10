@@ -20,7 +20,7 @@ import java.util.Locale
 interface VoiceManager {
     fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit)
     fun stopListening()
-    fun speak(text: String, onComplete: () -> Unit = {})
+    fun speak(text: String, isOnlineMode: Boolean = false, onComplete: () -> Unit = {})
     fun shutdown()
 }
 
@@ -107,11 +107,19 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
         }
     }
 
-    override fun speak(text: String, onComplete: () -> Unit) {
+    override fun speak(text: String, isOnlineMode: Boolean, onComplete: () -> Unit) {
         if (!isTtsReady || textToSpeech == null) {
             Log.w(TAG, "TTS not ready")
             onComplete()
             return
+        }
+
+        if (isOnlineMode) {
+            textToSpeech?.setPitch(0.8f) 
+            textToSpeech?.setSpeechRate(1.2f) 
+        } else {
+            textToSpeech?.setPitch(0.8f) 
+            textToSpeech?.setSpeechRate(1.2f) 
         }
 
         val utteranceId = "Aether_TTS_${System.currentTimeMillis()}"

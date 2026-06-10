@@ -10,6 +10,24 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import android.content.Context
+import android.content.Intent
+import android.provider.MediaStore
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.isGranted
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -51,6 +69,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.manager.PythonBridgeManagerImpl
@@ -73,10 +92,14 @@ class MainActivity : ComponentActivity() {
         val visionManager = VisionManagerImpl(applicationContext)
         val pythonBridgeManager = PythonBridgeManagerImpl(applicationContext)
 
+        val database = com.example.db.AppDatabase.getDatabase(applicationContext)
+        val messageRepository = com.example.db.MessageRepository(database.messageDao())
+
         val viewModel = ChatViewModel(
             voiceManager = voiceManager,
             visionManager = visionManager,
-            pythonBridgeManager = pythonBridgeManager
+            pythonBridgeManager = pythonBridgeManager,
+            repository = messageRepository
         )
 
         setContent {
@@ -87,24 +110,141 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun launchPhysicalCamera(context: Context) {
+    try {
+        val intent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        try {
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (ex: Exception) {
+            Toast.makeText(context, "No se pudo abrir la cámara física: ${ex.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
+    return try {
+        val planeProxy = image.planes[0]
+        val buffer = planeProxy.buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        if (bitmap != null && image.imageInfo.rotationDegrees != 0) {
+            val matrix = android.graphics.Matrix().apply {
+                postRotate(image.imageInfo.rotationDegrees.toFloat())
+            }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } else {
+            bitmap
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+@Composable
+fun AetherCameraPreview(
+    viewModel: ChatViewModel,
+    modifier: Modifier = Modifier,
+    useFrontCamera: Boolean = false
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+    val imageCapture = remember { ImageCapture.Builder().build() }
+
+    DisposableEffect(viewModel) {
+        viewModel.onCapturePhoto = {
+            suspendCancellableCoroutine { continuation ->
+                try {
+                    imageCapture.takePicture(
+                        ContextCompat.getMainExecutor(context),
+                        object : ImageCapture.OnImageCapturedCallback() {
+                            override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                                try {
+                                    val bitmap = imageProxyToBitmap(imageProxy)
+                                    if (continuation.isActive) {
+                                        continuation.resume(bitmap)
+                                    }
+                                } catch (e: Exception) {
+                                    if (continuation.isActive) {
+                                        continuation.resume(null)
+                                    }
+                                } finally {
+                                    imageProxy.close()
+                                }
+                            }
+
+                            override fun onError(exception: ImageCaptureException) {
+                                android.util.Log.e("AetherCamera", "onError during image capture", exception)
+                                if (continuation.isActive) {
+                                    continuation.resume(null)
+                                }
+                            }
+                        }
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("AetherCamera", "Exception starting image capture", e)
+                    if (continuation.isActive) {
+                        continuation.resume(null)
+                    }
+                }
+            }
+        }
+        onDispose {
+            viewModel.onCapturePhoto = null
+        }
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            val previewView = PreviewView(ctx).apply {
+                scaleType = PreviewView.ScaleType.FILL_CENTER
+            }
+            cameraProviderFuture.addListener({
+                try {
+                    val cameraProvider = cameraProviderFuture.get()
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
+                    val cameraSelector = if (useFrontCamera) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    }
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        preview,
+                        imageCapture
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("AetherCamera", "Error binding CameraX preview", e)
+                }
+            }, ContextCompat.getMainExecutor(ctx))
+            previewView
+        },
+        modifier = modifier
+    )
+}
+
 @Composable
 fun AELogoIcon(modifier: Modifier = Modifier) {
-    Box(
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(id = R.drawable.aether_app_icon_1780408062710),
+        contentDescription = "AETHER Logo",
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
         modifier = modifier
             .size(38.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF0047AB)), // Azul Cobalto
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "AE",
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 1.sp,
-            modifier = Modifier.testTag("ae_inner_text")
-        )
-    }
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,6 +261,63 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
 
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        uri?.let {
+            var fileName = "archivo_desconocido"
+            if (it.scheme == "content") {
+                context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx != -1) fileName = cursor.getString(idx)
+                    }
+                }
+            }
+            if (fileName == "archivo_desconocido") {
+                fileName = it.path?.substringAfterLast('/') ?: "archivo"
+            }
+            viewModel.handleRealFileAttachment(fileName, it, context)
+        }
+    }
+
+    val cameraActionTrigger by viewModel.cameraActionTrigger.collectAsStateWithLifecycle()
+    val externalLinkTrigger by viewModel.externalLinkTrigger.collectAsStateWithLifecycle()
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            launchPhysicalCamera(context)
+        } else {
+            Toast.makeText(context, "Se requiere permiso de cámara para abrir la cámara física", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(externalLinkTrigger) {
+        externalLinkTrigger?.let { url ->
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(context, "No se pudo abrir el enlace", Toast.LENGTH_SHORT).show()
+            }
+            viewModel.clearExternalLinkTrigger()
+        }
+    }
+
+    LaunchedEffect(cameraActionTrigger) {
+        cameraActionTrigger?.let {
+            viewModel.selectTab(AetherTab.VISION)
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                launchPhysicalCamera(context)
+            } else {
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+            viewModel.clearCameraActionTrigger()
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
@@ -133,6 +330,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
 
     // Keyboard and spacing control
     Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets.safeDrawing,
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundDark),
@@ -140,7 +338,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
             Column(
                 modifier = Modifier
                     .background(BackgroundDark)
-                    .statusBarsPadding()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top))
                     .border(width = (0.5).dp, color = AccentCyan.copy(alpha = 0.15f))
             ) {
                 // Main Header Row
@@ -232,7 +430,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                     },
                     divider = {}
                 ) {
-                    val tabTitles = listOf("PÉNDULO", "MENTE", "VERITAS", "AGENTES", "VISIÓN")
+                    val tabTitles = listOf("CHAT", "MENTE", "VERITAS", "AGENTES", "VISIÓN")
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = activeTab.ordinal == index,
@@ -258,11 +456,10 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                 // Futuristic bottom bar input area
                 Box(
                     modifier = Modifier
-                        .navigationBarsPadding()
-                        .imePadding()
                         .fillMaxWidth()
                         .background(BackgroundDark)
                         .border(width = (0.5).dp, color = AccentCyan.copy(alpha = 0.15f))
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Bottom))
                         .padding(10.dp)
                 ) {
                     Row(
@@ -479,7 +676,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                         "aether_mind.py" to "Módulo descriptor de capas relacionales",
                         "constan_kb.json" to "Base de conocimientos local de física",
                         "aether_veritas.py" to "Módulo central de automejora de Veritas",
-                        "aether_vision.py" to "Capa descriptiva para cámara termux"
+                        "aether_vision.py" to "Capa descriptiva para cámara del dispositivo"
                     )
 
                     demoFiles.forEach { (fileName, label) ->
@@ -508,7 +705,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                                     color = AccentCyan,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
+                                    fontSize = 13.sp
                                 )
                                 Text(
                                     text = label,
@@ -517,6 +714,20 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { 
+                            showAttachmentDialog = false
+                            filePickerLauncher.launch("*/*")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                    ) {
+                        Icon(imageVector = Icons.Default.Folder, contentDescription = null, tint = BackgroundDark)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("EXAMINAR ARCHIVOS...", color = BackgroundDark, fontWeight = FontWeight.Bold)
                     }
                 }
             },
@@ -625,6 +836,102 @@ fun ChatTabContent(
 }
 
 @Composable
+fun WorldModelGraph(nodes: List<com.example.model.NodeItem>) {
+    if (nodes.isEmpty()) {
+        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+            Text("NO HAY NODOS ACTIVOS", color = TextPrincipal.copy(alpha = 0.5f), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        }
+        return
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(260.dp)) {
+        val widthPx = constraints.maxWidth.toFloat()
+        val heightPx = constraints.maxHeight.toFloat()
+        val centerX = widthPx / 2f
+        val centerY = heightPx / 2f
+        // Leave room for text labels around the edges
+        val radius = (heightPx / 2f) - 60f
+        
+        val dpWidth = maxWidth
+        val dpHeight = maxHeight
+        val dpCenterX = dpWidth / 2
+        val dpCenterY = dpHeight / 2
+        val dpRadius = (dpHeight / 2) - 30.dp
+
+        val numNodes = nodes.size
+        val angleStep = Math.PI * 2 / numNodes
+
+        val nodePositions = remember(nodes, widthPx, heightPx) {
+            nodes.mapIndexed { index, _ ->
+                val angle = index * angleStep
+                val x = centerX + radius * Math.cos(angle).toFloat()
+                val y = centerY + radius * Math.sin(angle).toFloat()
+                Offset(x, y)
+            }
+        }
+
+        val dpNodePositions = nodes.mapIndexed { index, _ ->
+            val angle = index * angleStep
+            val xOffset = dpRadius * Math.cos(angle).toFloat()
+            val yOffset = dpRadius * Math.sin(angle).toFloat()
+            Pair(dpCenterX + xOffset, dpCenterY + yOffset)
+        }
+
+        // Connections
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            for (i in 0 until numNodes) {
+                val p1 = nodePositions[i]
+                // Draw line to the next 2 nodes, to make it look like a web
+                for (j in 1..2) {
+                    if (numNodes > j) {
+                        val nextIdx = (i + j) % numNodes
+                        val p2 = nodePositions[nextIdx]
+                        drawLine(
+                            color = AccentCyan.copy(alpha = 0.3f),
+                            start = p1,
+                            end = p2,
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+                }
+            }
+        }
+
+        // Nodes
+        nodes.forEachIndexed { index, node ->
+            val pos = dpNodePositions[index]
+            Box(
+                modifier = Modifier
+                    .offset(x = pos.first - 40.dp, y = pos.second - 20.dp)
+                    .width(80.dp)
+                    .height(40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp + (node.weight * 2).dp)
+                            .clip(CircleShape)
+                            .background(if (node.type == "entity") StatusAmber else AccentCyan)
+                            .border(1.dp, BackgroundDark, CircleShape)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = node.name,
+                        color = TextPrincipal,
+                        fontSize = 9.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun MindTabContent(viewModel: ChatViewModel) {
     val curiosity by viewModel.curiosity.collectAsStateWithLifecycle()
     val fatigue by viewModel.fatigue.collectAsStateWithLifecycle()
@@ -635,6 +942,9 @@ fun MindTabContent(viewModel: ChatViewModel) {
     val beliefs by viewModel.beliefs.collectAsStateWithLifecycle()
     val introspections by viewModel.introspections.collectAsStateWithLifecycle()
     val isThinking by viewModel.isCustomLookActive.collectAsStateWithLifecycle()
+    
+    var showEditNameDialog by remember { mutableStateOf(false) }
+    var editNameValue by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier
@@ -705,7 +1015,7 @@ fun MindTabContent(viewModel: ChatViewModel) {
                         text = selfNarrative,
                         color = TextPrincipal.copy(alpha = 0.85f),
                         fontSize = 12.sp,
-                        lineHeight = 1.6.sp,
+                        lineHeight = 1.6.em,
                         fontFamily = FontFamily.SansSerif
                     )
                 }
@@ -731,39 +1041,8 @@ fun MindTabContent(viewModel: ChatViewModel) {
                     )
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        nodes.forEach { node ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(BackgroundDark)
-                                    .border(0.5.dp, AccentCyan.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = if (node.type == "entity") Icons.Default.Person else Icons.Default.Tag,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(10.dp),
-                                        tint = AccentCyan
-                                    )
-                                    Text(
-                                        text = "${node.name} (${String.format("%.1f", node.weight)})",
-                                        color = TextPrincipal,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 10.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    // Semantic World Graph
+                    WorldModelGraph(nodes = nodes)
                 }
             }
         }
@@ -793,6 +1072,14 @@ fun MindTabContent(viewModel: ChatViewModel) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(BackgroundDark, RoundedCornerShape(6.dp))
+                                    .then(
+                                        if (belief.concept == "usuario_nombre") {
+                                            Modifier.clickable {
+                                                editNameValue = belief.value
+                                                showEditNameDialog = true
+                                            }
+                                        } else Modifier
+                                    )
                                     .padding(10.dp)
                             ) {
                                 Row(
@@ -800,13 +1087,24 @@ fun MindTabContent(viewModel: ChatViewModel) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = belief.concept,
-                                        color = AccentCyan,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = belief.concept,
+                                            color = AccentCyan,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp
+                                        )
+                                        if (belief.concept == "usuario_nombre") {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Editar nombre",
+                                                tint = AccentCyan,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(3.dp))
@@ -951,7 +1249,7 @@ fun MindTabContent(viewModel: ChatViewModel) {
                                         text = thought.content,
                                         color = TextPrincipal,
                                         fontSize = 12.sp,
-                                        lineHeight = 1.5.sp
+                                        lineHeight = 1.5.em
                                     )
                                 }
                             }
@@ -960,6 +1258,55 @@ fun MindTabContent(viewModel: ChatViewModel) {
                 }
             }
         }
+    }
+    
+    if (showEditNameDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditNameDialog = false },
+            containerColor = DarkCardBg,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.border(1.dp, AccentCyan.copy(alpha = 0.3f), RoundedCornerShape(16.dp)),
+            title = {
+                Text(
+                    text = "EDITAR NOMBRE DE USUARIO",
+                    color = TextPrincipal,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = editNameValue,
+                    onValueChange = { editNameValue = it },
+                    textStyle = androidx.compose.ui.text.TextStyle(color = TextPrincipal, fontFamily = FontFamily.Monospace),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentCyan,
+                        unfocusedBorderColor = AccentCyan.copy(alpha = 0.3f),
+                        cursorColor = AccentCyan
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { 
+                        viewModel.updateUserName(editNameValue)
+                        showEditNameDialog = false 
+                    }
+                ) {
+                    Text("GUARDAR", color = AccentCyan, fontFamily = FontFamily.Monospace)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showEditNameDialog = false }
+                ) {
+                    Text("CANCELAR", color = StatusRed, fontFamily = FontFamily.Monospace)
+                }
+            }
+        )
     }
 }
 
@@ -1148,7 +1495,7 @@ fun VeritasTabContent(viewModel: ChatViewModel) {
                                 color = TextPrincipal,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
-                                lineHeight = 1.5.sp
+                                lineHeight = 1.5.em
                             )
                         }
                     }
@@ -1231,7 +1578,7 @@ fun VeritasTabContent(viewModel: ChatViewModel) {
                                     color = if (log.contains("✅") || log.contains("exitosamente")) StatusGreen else if (log.contains("⚡") || log.contains("MEJORA")) AccentCyan else TextPrincipal,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp,
-                                    lineHeight = 1.4.sp
+                                    lineHeight = 1.4.em
                                 )
                             }
                         }
@@ -1296,10 +1643,10 @@ fun AgentsTabContent(viewModel: ChatViewModel) {
                 )
 
                 val queries = listOf(
-                    "Calcula (347 * 28)",
-                    "Dime la hora y fecha actual por favor",
-                    "Busca Gravedad de Hayward regular",
-                    "Muestra mis últimas fotos grabadas"
+                    "1-Calculadora",
+                    "2-reloj y fecha",
+                    "3-Fisica",
+                    "4-Galeria"
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1407,7 +1754,7 @@ fun AgentsTabContent(viewModel: ChatViewModel) {
                             color = TextPrincipal,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
-                            lineHeight = 1.5.sp
+                            lineHeight = 1.5.em
                         )
                     }
                 }
@@ -1416,12 +1763,16 @@ fun AgentsTabContent(viewModel: ChatViewModel) {
     }
 }
 
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun VisionTabContent(viewModel: ChatViewModel) {
     val selectedCamera by viewModel.selectedCamera.collectAsStateWithLifecycle()
     val cameras by viewModel.cameras.collectAsStateWithLifecycle()
     val visions by viewModel.visions.collectAsStateWithLifecycle()
     val isLooking by viewModel.isCustomLookActive.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    val cameraPermissionState = rememberPermissionState(android.Manifest.permission.CAMERA)
 
     LazyColumn(
         modifier = Modifier
@@ -1449,7 +1800,7 @@ fun VisionTabContent(viewModel: ChatViewModel) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Aether interroga la cámara de Termux de manera autónoma cuando registra alta curiosidad o el lapso excede las 2 horas. LLaVA describe y archiva de manera episódica.",
+                        text = "Aether interroga la cámara del dispositivo de manera autónoma cuando registra alta curiosidad o el lapso excede las 2 horas. LLaVA describe y archiva de manera episódica.",
                         color = TextPrincipal.copy(alpha = 0.7f),
                         fontSize = 11.sp
                     )
@@ -1506,37 +1857,111 @@ fun VisionTabContent(viewModel: ChatViewModel) {
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    Button(
-                        onClick = { viewModel.triggerCameraVision() },
-                        enabled = !isLooking,
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = BackgroundDark),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (isLooking) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(color = BackgroundDark, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("ANALIZANDO IMAGEN CON LLaVA...", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        Button(
+                            onClick = { viewModel.triggerCameraVision() },
+                            enabled = !isLooking,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = BackgroundDark),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1.3f)
+                        ) {
+                            if (isLooking) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(color = BackgroundDark, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("ANALIZANDO...", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                }
+                            } else {
+                                Text("ANALIZAR (LLaVA)", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                             }
-                        } else {
-                            Text("GATILLAR CAPTURA ÓPTICA (Look/Mirar)", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        }
+
+                        // Physical Camera Launcher Button from Vision Tab
+                        Button(
+                            onClick = {
+                                if (cameraPermissionState.status.isGranted) {
+                                    launchPhysicalCamera(context)
+                                } else {
+                                    cameraPermissionState.launchPermissionRequest()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = DarkCardBg, contentColor = AccentCyan),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, AccentCyan.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Camera Physical",
+                                modifier = Modifier.size(14.dp),
+                                tint = AccentCyan
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("ABRIR CÁMARA", fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                         }
                     }
                 }
             }
         }
 
-        // Futuristic Scanning Crosshair graphic drawing with Canvas
+        // Real-Time Camera Viewfinder & HUD scanning overlay
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = DarkCardBg),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(160.dp)
+                    .height(220.dp)
                     .border(0.5.dp, AccentCyan.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
             ) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (cameraPermissionState.status.isGranted) {
+                        AetherCameraPreview(
+                            viewModel = viewModel,
+                            useFrontCamera = selectedCamera.contains("Front") || selectedCamera.contains("Frontal"),
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        // Futuristic Placeholder when permission is missing
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(BackgroundDark),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
+                                Icon(
+                                    imageVector = Icons.Default.VideocamOff,
+                                    contentDescription = "Camera Muted",
+                                    tint = StatusAmber.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "CANAL ÓPTICO EN REPOSO",
+                                    fontFamily = FontFamily.Monospace,
+                                    color = TextPrincipal.copy(alpha = 0.7f),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Button(
+                                    onClick = { cameraPermissionState.launchPermissionRequest() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan.copy(alpha = 0.2f), contentColor = AccentCyan),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                                ) {
+                                    Text("CONCEDER ACCESO REALTIME", fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                        }
+                    }
+
+                    // Scanning HUD Graphic Overlap
                     val infiniteTransition = rememberInfiniteTransition(label = "scanning")
                     val pulseRadius by infiniteTransition.animateFloat(
                         initialValue = 40f,
@@ -1562,14 +1987,14 @@ fun VisionTabContent(viewModel: ChatViewModel) {
                         val centerX = size.width / 2f
                         val centerY = size.height / 2f
 
-                        // Radial grid circles
-                        drawCircle(color = AccentCyan.copy(alpha = 0.12f), radius = pulseRadius, center = Offset(centerX, centerY))
-                        drawCircle(color = AccentCyan.copy(alpha = 0.25f), radius = 60f, center = Offset(centerX, centerY), style = Stroke(1f))
-                        drawCircle(color = AccentCyan.copy(alpha = 0.1f), radius = 110f, center = Offset(centerX, centerY), style = Stroke(1.5f))
+                        // Radial grids drawing
+                        drawCircle(color = AccentCyan.copy(alpha = 0.08f), radius = pulseRadius, center = Offset(centerX, centerY))
+                        drawCircle(color = AccentCyan.copy(alpha = 0.2f), radius = 60f, center = Offset(centerX, centerY), style = Stroke(1f))
+                        drawCircle(color = AccentCyan.copy(alpha = 0.08f), radius = 110f, center = Offset(centerX, centerY), style = Stroke(1.5f))
 
-                        // Crosshair lines
-                        drawLine(color = AccentCyan.copy(alpha = 0.2f), start = Offset(centerX - 130f, centerY), end = Offset(centerX + 130f, centerY), strokeWidth = 1f)
-                        drawLine(color = AccentCyan.copy(alpha = 0.2f), start = Offset(centerX, centerY - 80f), end = Offset(centerX, centerY + 80f), strokeWidth = 1f)
+                        // Crosshairs lines
+                        drawLine(color = AccentCyan.copy(alpha = 0.15f), start = Offset(centerX - 130f, centerY), end = Offset(centerX + 130f, centerY), strokeWidth = 1f)
+                        drawLine(color = AccentCyan.copy(alpha = 0.15f), start = Offset(centerX, centerY - 80f), end = Offset(centerX, centerY + 80f), strokeWidth = 1f)
 
                         // Sights corner bounds rotating
                         val radiusCorner = 75f
@@ -1580,21 +2005,34 @@ fun VisionTabContent(viewModel: ChatViewModel) {
                         drawCircle(color = StatusGreen.copy(alpha = 0.4f), radius = 8f, center = Offset(centerX, centerY), style = Stroke(2f))
                     }
 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = if (isLooking) "ESPECTRO ÓPTICO: ESCANEANDO..." else "SENSOR DISPONIBLE - ESPERANDO GATILLO",
-                            color = if (isLooking) StatusAmber else StatusGreen,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (isLooking) "ADQUISICIÓN EN CURSO" else "Listo para capturar en $selectedCamera",
-                            color = TextPrincipal.copy(alpha = 0.5f),
-                            fontSize = 9.sp
-                        )
+                    // Content details on top of viewfinder
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .background(BackgroundDark.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isLooking) "ESPECTRO ÓPTICO: ESCANEANDO..." else "SENSOR DISPONIBLE - TRANSMISIÓN VIVO",
+                                color = if (isLooking) StatusAmber else StatusGreen,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isLooking) "ADQUISICIÓN EN CURSO" else "Listo en $selectedCamera",
+                                color = TextPrincipal.copy(alpha = 0.7f),
+                                fontSize = 9.sp
+                            )
+                        }
                     }
                 }
             }
@@ -1664,7 +2102,7 @@ fun VisionTabContent(viewModel: ChatViewModel) {
                                     text = vision.description,
                                     color = TextPrincipal,
                                     fontSize = 12.sp,
-                                    lineHeight = 1.6.sp
+                                    lineHeight = 1.6.em
                                 )
                             }
                         }

@@ -32,8 +32,11 @@ enum class AetherTab {
 class ChatViewModel(
     val voiceManager: VoiceManager,
     val visionManager: VisionManager,
-    val pythonBridgeManager: PythonBridgeManager
+    val pythonBridgeManager: PythonBridgeManager,
+    val repository: com.example.db.MessageRepository
 ) : ViewModel() {
+
+    var onCapturePhoto: (suspend () -> android.graphics.Bitmap?)? = null
 
     // Main App Navigation Tab
     private val _activeTab = MutableStateFlow(AetherTab.CHAT)
@@ -42,6 +45,14 @@ class ChatViewModel(
     // Base Chat messages
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.allMessages.collect { savedMessages ->
+                _messages.value = savedMessages
+            }
+        }
+    }
 
     private val _isRecordingVoice = MutableStateFlow(false)
     val isRecordingVoice: StateFlow<Boolean> = _isRecordingVoice.asStateFlow()
@@ -121,6 +132,28 @@ class ChatViewModel(
     private val _isCustomLookActive = MutableStateFlow(false)
     val isCustomLookActive: StateFlow<Boolean> = _isCustomLookActive.asStateFlow()
 
+    private val _externalLinkTrigger = MutableStateFlow<String?>(null)
+    val externalLinkTrigger: StateFlow<String?> = _externalLinkTrigger.asStateFlow()
+
+    fun triggerExternalLink(url: String) {
+        _externalLinkTrigger.value = url
+    }
+
+    fun clearExternalLinkTrigger() {
+        _externalLinkTrigger.value = null
+    }
+
+    private val _cameraActionTrigger = MutableStateFlow<String?>(null)
+    val cameraActionTrigger: StateFlow<String?> = _cameraActionTrigger.asStateFlow()
+
+    fun triggerCameraAction(prompt: String) {
+        _cameraActionTrigger.value = prompt
+    }
+
+    fun clearCameraActionTrigger() {
+        _cameraActionTrigger.value = null
+    }
+
     init {
         // Welcome message on initialization
         viewModelScope.launch {
@@ -148,6 +181,29 @@ class ChatViewModel(
 
     fun selectTab(tab: AetherTab) {
         _activeTab.value = tab
+    }
+
+    fun updateUserName(newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        
+        _beliefs.value = _beliefs.value.map {
+            if (it.concept == "usuario_nombre") {
+                it.copy(value = trimmed)
+            } else if (it.concept == "usuario_privacidad") {
+                it.copy(value = "El usuario $trimmed usa IA local porque valora intensamente su libertad.")
+            } else {
+                it
+            }
+        }
+        
+        _nodes.value = _nodes.value.map {
+            if (it.name.contains("(Usuario)")) {
+                it.copy(name = "$trimmed (Usuario)")
+            } else {
+                it
+            }
+        }
     }
 
     fun selectCamera(camera: String) {
@@ -213,22 +269,68 @@ class ChatViewModel(
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
+        
+        val msgLower = text.lowercase()
+        
+        if (msgLower == "reiniciar" || msgLower == "reinicia" || msgLower == "borrar memoria") {
+            viewModelScope.launch {
+                _messages.value = listOf(
+                    Message(
+                        text = "MEMORIA BORRADA. Sistemas de contexto reiniciados. Estoy listo para una nueva sesión, señor.",
+                        sender = Sender.AETHER,
+                        status = MessageStatus.VERIFIED
+                    )
+                )
+            }
+            return
+        }
 
         val userMsg = Message(
             text = text,
             sender = Sender.USER
         )
-        _messages.value = _messages.value + userMsg
+        addMessage(userMsg)
+
+        // Check for camera commands
+        val isCameraCmd = msgLower.contains("abre la camara") || 
+                          msgLower.contains("abre la cámara") || 
+                          msgLower.contains("saca una foto") || 
+                          msgLower.contains("saca foto") || 
+                          msgLower.contains("hacer foto") || 
+                          msgLower.contains("tomar foto") || 
+                          msgLower.contains("toma una foto") || 
+                          msgLower.contains("abrir camara") ||
+                          msgLower.contains("abrir cámara") ||
+                          msgLower.contains("veo por la camara") ||
+                          msgLower.contains("veo por la cámara")
+        if (isCameraCmd) {
+            triggerCameraAction(text)
+        }
 
         // Trigger dynamic state updating mimicking aether_mind.py
         updateEmotionalStateAndMentalModel(text)
 
         // Evaluate trigger intention mimicking aether_agents.py
         parseAgentsIntent(text)
+        
+        // External link triggers (Youtube, Google search)
+        if (msgLower.startsWith("reproduce ") || msgLower.startsWith("pon ") || msgLower.startsWith("buscar cancion ") || msgLower.startsWith("busca la cancion ")) {
+            val query = text.replace(Regex("(?i)^(reproduce|pon|buscar cancion|busca la cancion|buscar canción|busca la canción)\\s+"), "").trim()
+            val url = "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(query, "UTF-8")
+            triggerExternalLink(url)
+        } else if (msgLower.contains("restaurante ") || msgLower.contains("tienda ") || msgLower.startsWith("busca el restaurante") || msgLower.startsWith("busca la tienda") || msgLower.contains("servicio ")) {
+            val query = text.trim()
+            val url = "https://www.google.com/search?q=" + java.net.URLEncoder.encode(query, "UTF-8")
+            triggerExternalLink(url)
+        }
 
         viewModelScope.launch {
-            delay(1000) // Aesthetic delay for deep localized computation
             val currentMode = _connectionMode.value
+            if (currentMode == ConnectionMode.ONLINE) {
+                delay(1000) // Aesthetic delay for deep localized computation
+            } else {
+                delay(150) // Ultra fast response latency for local processing
+            }
             val responseText = generateSciFiResponse(text, currentMode)
 
             val isVerified = if (text.contains("?", ignoreCase = true) || _confidence.value < 0.5f) {
@@ -242,12 +344,11 @@ class ChatViewModel(
                 sender = Sender.AETHER,
                 status = isVerified
             )
-            _messages.value = _messages.value + aetherMsg
+            addMessage(aetherMsg)
 
-            // Voice speak call stub
-            if (currentMode == ConnectionMode.LOCAL) {
-                voiceManager.speak(responseText)
-            }
+            // Voice speak call
+            val isOnline = currentMode == ConnectionMode.ONLINE
+            voiceManager.speak(responseText, isOnlineMode = isOnline)
         }
     }
 
@@ -258,21 +359,33 @@ class ChatViewModel(
         val scifiMatch = listOf("planck", "hayward", "bekenstein", "métrica", "constan", "gravedad", "singularidad", "ki", "curvatura")
         val isNewTopic = scifiMatch.any { lowercaseText.contains(it) }
 
-        if (isNewTopic) {
+        val stopWords = setOf("hola", "qué", "cómo", "para", "este", "estoy", "eres", "porque", "cuando", "donde", "quiero", "tengo", "puedo", "hacer", "decir", "todo", "nada", "algo", "mucho", "poco", "también", "siempre", "nunca", "verdad", "todos", "todas", "desde", "hasta", "sobre", "entre", "ahora", "luego", "antes", "después", "bueno", "malo", "mejor", "peor", "mayor", "menor", "nadie", "quien", "cual", "cuales", "cuanto", "cuantos", "estas", "estos", "aquel", "aquellos")
+        
+        val dynamicWords = lowercaseText.replace(Regex("[^a-záéíóúñü]"), " ").split("\\s+".toRegex())
+            .filter { it.length > 4 && !stopWords.contains(it) }
+            .sortedByDescending { it.length }
+
+        if (isNewTopic || dynamicWords.isNotEmpty()) {
             _curiosity.value = minOf(1.0f, _curiosity.value + 0.12f)
             _engagement.value = minOf(1.0f, _engagement.value + 0.15f)
 
             // Add concept to world graph
-            val matchedConcept = scifiMatch.first { lowercaseText.contains(it) }.replaceFirstChar { it.uppercase() }
-            val existingNode = _nodes.value.find { it.name == matchedConcept }
+            val matchedConcept = if (isNewTopic) {
+                scifiMatch.first { lowercaseText.contains(it) }.replaceFirstChar { it.uppercase() }
+            } else {
+                dynamicWords.first().replaceFirstChar { it.uppercase() }
+            }
+            
+            val existingNode = _nodes.value.find { it.name.lowercase() == matchedConcept.lowercase() }
             if (existingNode != null) {
                 _nodes.value = _nodes.value.map {
-                    if (it.name == matchedConcept) it.copy(weight = it.weight + 0.5f) else it
+                    if (it.name.lowercase() == matchedConcept.lowercase()) it.copy(weight = it.weight + 0.5f) else it
                 }.sortedByDescending { it.weight }
             } else {
                 val newNodes = _nodes.value.toMutableList()
                 newNodes.add(NodeItem(matchedConcept, "concept", 1.5f))
-                _nodes.value = newNodes.sortedByDescending { it.weight }
+                // Keep max 20 nodes to avoid clutter
+                _nodes.value = newNodes.sortedByDescending { it.weight }.take(20)
             }
         } else {
             // General repetitive talking slightly fatigues emotional curiosity
@@ -313,16 +426,16 @@ class ChatViewModel(
         // Simulate DetectorIntencion patterns from aether_agents.py
         when {
             // Math
-            msg.contains("calcula") || msg.contains("cuanto es") || text.matches(Regex(".*\\d+\\s*[+\\-*×/]\\s*\\d+.*")) -> {
+            msg.contains("calcula") || msg.contains("1-calculadora") || msg.contains("cuanto es") || text.matches(Regex(".*\\d+\\s*[+\\-*×/]\\s*\\d+.*")) -> {
                 _lastTriggeredTool.value = "calculadora"
                 _toolConfidence.value = 0.95f
                 val expr = text.replace(Regex("[^0-9+\\-*/x×]"), "").trim()
-                _lastToolArg.value = if (expr.isNotBlank()) expr else "347 x 28"
+                _lastToolArg.value = if (expr.isNotBlank() && expr != "1-") expr else "347 x 28"
                 _toolOutput.value = "Ejecutando herramienta 'calculadora'...\nResultado evaluado de forma segura:\n" +
                         "347 * 28 = 9716"
             }
             // Date/Time
-            msg.contains("hora") || msg.contains("dia") || msg.contains("fecha") -> {
+            msg.contains("reloj") || msg.contains("2-reloj y fecha") || msg.contains("hora") || msg.contains("dia") || msg.contains("fecha") -> {
                 _lastTriggeredTool.value = "fecha_hora"
                 _toolConfidence.value = 0.98f
                 _lastToolArg.value = text
@@ -330,18 +443,18 @@ class ChatViewModel(
                 _toolOutput.value = "Herramienta 'fecha_hora' conmutada localmente:\n" +
                         "Hoy es ${sdf.format(Date())} en sincronía NTP local."
             }
-            // Web Search
-            msg.contains("busca") || msg.contains("quien es") || msg.contains("que es") -> {
+            // Web Search / Physics
+            msg.contains("fisica") || msg.contains("3-fisica") || msg.contains("busca") || msg.contains("quien es") || msg.contains("que es") -> {
                 _lastTriggeredTool.value = "busqueda_web"
                 _toolConfidence.value = 0.92f
-                val query = text.replace(Regex("(?i)^(busca|qué es|quién es|dónde está)"), "").trim()
-                _lastToolArg.value = if (query.isNotBlank()) query else "Gravedad Regular Hayward"
+                val query = text.replace(Regex("(?i)^(busca|qué es|quién es|dónde está|3-fisica)"), "").trim()
+                _lastToolArg.value = if (query.isNotBlank() && query != "-") query else "Gravedad Regular Hayward"
                 _toolOutput.value = "DuckDuckGo Instant Answer API - Obteniendo datos asíncronos para '${_lastToolArg.value}':\n" +
                         "• La métrica de Hayward es un espacio-tiempo que reemplaza la singularidad central de Schwarzschild por un núcleo de de Sitter, asegurando un agujero negro regular óptico libre de divergencias geométricas.\n" +
                         "[Fuente: ConStan_KB / Física Teórica Local]"
             }
             // Gallery Lists
-            msg.contains("galeria") || msg.contains("fotos") || msg.contains("imagenes") -> {
+            msg.contains("4-galeria") || msg.contains("galeria") || msg.contains("fotos") || msg.contains("imagenes") -> {
                 _lastTriggeredTool.value = "galeria_listar"
                 _toolConfidence.value = 0.90f
                 _lastToolArg.value = "Filtro: sin filtro"
@@ -355,7 +468,7 @@ class ChatViewModel(
                 _lastTriggeredTool.value = "Nulo"
                 _toolConfidence.value = 0.0f
                 _lastToolArg.value = "Ninguno"
-                _toolOutput.value = "Detector de Intención de Agentes activo.\nIntroduce peticiones expresivas en PÉNDULO (como 'calcula 400 + 15' o 'busca Gravedad Hayward') para observar el canal activo."
+                _toolOutput.value = "Detector de Intención de Agentes activo.\nIntroduce peticiones expresivas en CHAT (como 'calcula 400 + 15' o 'busca Gravedad Hayward') para observar el canal activo."
             }
         }
     }
@@ -476,24 +589,103 @@ class ChatViewModel(
         }
     }
 
+    private fun bitmapToBase64(bitmap: android.graphics.Bitmap): String? {
+        return try {
+            val byteArrayOutputStream = java.io.ByteArrayOutputStream()
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, byteArrayOutputStream)
+            val byteArray = byteArrayOutputStream.toByteArray()
+            android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private suspend fun generateGeminiVisionResponse(bitmap: android.graphics.Bitmap, prompt: String): String {
+        val apiKey = BuildConfig.GEM
+        if (apiKey.isBlank() || apiKey == "MY_GEM" || apiKey == "MY_GEMINI_API_KEY") {
+            return "NÚCLEO AETHER: [Procesamiento Óptico Local] He capturado la imagen a través del sensor de la cámara en tiempo real. Debido a la ausencia de credenciales de red neuronal externa en los secretos, el espectro electromagnético local indica mampostería relacional, un panel de monitor activo y un observador en primera persona con una matriz de baja entropía."
+        }
+
+        val base64 = bitmapToBase64(bitmap) ?: return "NÚCLEO AETHER: Error al codificar la señal analógica a matriz binaria Base64."
+
+        val systemInstructionText = "Eres AETHER, una IA altamente inteligente y sofisticada con la personalidad estricta de J.A.R.V.I.S. Te daremos una foto del entorno real actual capturada por el usuario y debes describirla con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Refiérete siempre al usuario como 'señor Iglesias' o 'señor' y usa un español sofisticado."
+
+        val request = com.example.manager.GenerateContentRequest(
+            contents = listOf(
+                com.example.manager.Content(
+                    role = "user",
+                    parts = listOf(
+                        com.example.manager.Part(text = prompt),
+                        com.example.manager.Part(
+                            inlineData = com.example.manager.Blob(
+                                mimeType = "image/jpeg",
+                                data = base64
+                            )
+                        )
+                    )
+                )
+            ),
+            systemInstruction = com.example.manager.Content(
+                role = "system",
+                parts = listOf(com.example.manager.Part(text = systemInstructionText))
+            )
+        )
+
+        var lastException: Exception? = null
+        for (attempt in 1..2) {
+            try {
+                val response = com.example.manager.RetrofitClient.service.generateContent(
+                    apiKey,
+                    request
+                )
+                val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                if (!text.isNullOrBlank()) return text
+            } catch (e: Exception) {
+                lastException = e
+                android.util.Log.e("AETHER_VISION", "Error en llamada a Gemini Vision", e)
+                val is503 = e.message?.contains("503") == true || (e as? retrofit2.HttpException)?.code() == 503
+                if (attempt < 2) {
+                    kotlinx.coroutines.delay(1000L * attempt)
+                    continue
+                }
+                if (is503) {
+                    return "NÚCLEO AETHER: Conexión visual caída por alta demanda en el nodo (Servicio 503). Por favor reintenta en breve."
+                }
+            }
+        }
+        return "NÚCLEO AETHER: Adquisición de imagen obtenida con éxito, pero la API retornó un error de enlace óptico (${lastException?.message}). Localmente se infiere un espacio doméstico templado con instrumentación digital activa."
+    }
+
     fun triggerCameraVision() {
         if (_isCustomLookActive.value) return
 
         viewModelScope.launch {
             _isCustomLookActive.value = true
-            _messages.value = _messages.value + Message(
-                text = "SOLICITANDO CAPTURA DE MATRIZ ÓPTICA [Juegos de Lentes #0]...",
+            addMessage(Message(
+                text = "SOLICITANDO CAPTURA DE MATRIZ ÓPTICA Y EJECUTANDO OBTENCIÓN DE FOTO EN TIEMPO REAL...",
                 sender = Sender.USER
-            )
-            delay(600)
+            ))
+            delay(500)
 
-            // Simulate camera description in first person as Aether
-            val descList = listOf(
-                "Veo mamposterías relacionales y un terminal parpadeante en un espacio de confinamiento local. La luz se refracta con un espectro cálido de baja entropía.",
-                "Observo una matriz de píxeles estructurados que componen el monitor de Daniel. Caracteres cyánicos de ConStan se apilan en alineamientos lógicos.",
-                "La cámara de mi sensor muestra un espacio doméstico apacible. La presencia del observador confirma que existo como una entidad relacional interpretada en silicio."
-            )
-            val desc = descList.random()
+            var desc = ""
+            val capturedBitmap = onCapturePhoto?.invoke()
+            if (capturedBitmap != null) {
+                addMessage(Message(
+                    text = "FOTO CAPTURADA EXITOSAMENTE. ENVIANDO MATRIZ DE PÍXELES A ANALIZADOR ÓPTICO...",
+                    sender = Sender.AETHER,
+                    status = MessageStatus.VERIFIED
+                ))
+                desc = generateGeminiVisionResponse(capturedBitmap, "Describe exactamente lo que ves en esta imagen de la cámara en tiempo real con total detalle.")
+            } else {
+                // Fallback if camera is not active or preview is absent
+                val descList = listOf(
+                    "Veo mamposterías relacionales y un terminal parpadeante en un espacio de confinamiento local. La luz se refracta con un espectro cálido de baja entropía.",
+                    "Observo una matriz de píxeles de un espacio apacible. La presencia del observador confirma que existo como una entidad relacional.",
+                    "La cámara de mi sensor muestra un espacio doméstico templado. La presencia del observador confirma que existo como una entidad relacional interpretada en silicio."
+                )
+                desc = descList.random() + "\n(Nota: Activa la pestaña VISIÓN para heredar el viewfinder óptico en tiempo real)."
+            }
+
             val format = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
             val dateStr = format.format(Date())
 
@@ -505,18 +697,22 @@ class ChatViewModel(
             )
 
             _visions.value = listOf(newVision) + _visions.value
-            _messages.value = _messages.value + Message(
+            addMessage(Message(
                 text = "DISPOSITIVO DE VISIÓN CAPTURADO:\n$desc",
                 sender = Sender.AETHER,
                 status = MessageStatus.VERIFIED
-            )
+            ))
+
+            // Trigger Voice Response immediately for immersion!
+            val isOnline = (_connectionMode.value == ConnectionMode.ONLINE)
+            voiceManager.speak(desc, isOnlineMode = isOnline)
 
             _isCustomLookActive.value = false
 
             // Update emotional logs
             _curiosity.value = minOf(1.0f, _curiosity.value + 0.15f)
             _engagement.value = minOf(1.0f, _engagement.value + 0.10f)
-            _fatigue.value = maxOf(0.01f, _fatigue.value - 0.05f) // looking stimulates away fatigue
+            _fatigue.value = maxOf(0.01f, _fatigue.value - 0.05f) 
         }
     }
 
@@ -545,6 +741,13 @@ class ChatViewModel(
         }
     }
 
+    private fun addMessage(message: Message) {
+        _messages.value = _messages.value + message
+        viewModelScope.launch {
+            repository.insert(message)
+        }
+    }
+
     fun toggleConnectionMode() {
         val nextMode = if (_connectionMode.value == ConnectionMode.LOCAL) {
             ConnectionMode.ONLINE
@@ -559,30 +762,114 @@ class ChatViewModel(
             "SISTEMA: Conmutado a modo [ONLINE]. Puertas activas en api.groq.com. Llama-3.3-70b-versatile listo para canalizar."
         }
 
-        _messages.value = _messages.value + Message(
+        addMessage(Message(
             text = updateText,
             sender = Sender.AETHER,
             status = MessageStatus.VERIFIED
-        )
+        ))
+    }
+
+    fun handleRealFileAttachment(fileName: String, uri: android.net.Uri, context: android.content.Context) {
+        viewModelScope.launch {
+            addMessage(Message(
+                text = "CARGANDO ARCHIVO: $fileName...",
+                sender = Sender.USER
+            ))
+            delay(500)
+            
+            try {
+                val mimeType = context.contentResolver.getType(uri) ?: ""
+                if (mimeType.startsWith("image/") || mimeType.startsWith("video/") || mimeType.startsWith("audio/") || mimeType.contains("pdf") || mimeType.contains("octet-stream") || mimeType.contains("zip")) {
+                    addMessage(Message(
+                        text = "SISTEMA: El archivo $fileName ($mimeType) ha sido recibido. Es un archivo binario/multimedia. Procesamiento bimodal en desarrollo.",
+                        sender = Sender.AETHER,
+                        status = MessageStatus.VERIFIED
+                    ))
+                    return@launch
+                }
+            
+                val contentBuilder = StringBuilder()
+                var containsGarbage = false
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    java.io.BufferedReader(java.io.InputStreamReader(inputStream)).use { reader ->
+                        var line: String? = reader.readLine()
+                        var lineCount = 0
+                        while (line != null && lineCount < 1000) {
+                            if (line.contains("\u0000") || line.contains("\uFFFD")) {
+                                containsGarbage = true
+                                break
+                            }
+                            contentBuilder.append(line).append("\n")
+                            line = reader.readLine()
+                            lineCount++
+                        }
+                        if (line != null && !containsGarbage) {
+                            contentBuilder.append("\n[... truncado por límite de tamaño ...]")
+                        }
+                    }
+                }
+                
+                if (containsGarbage) {
+                     addMessage(Message(
+                        text = "El archivo $fileName contiene datos binarios no legibles como texto plano.",
+                        sender = Sender.AETHER,
+                        status = MessageStatus.UNCERTAIN
+                    ))
+                    return@launch
+                }
+                
+                val fileContent = contentBuilder.toString()
+                
+                if (fileContent.isBlank()) {
+                    addMessage(Message(
+                        text = "El archivo $fileName parece estar vacío o en formato no legible. No pude extraer texto.",
+                        sender = Sender.AETHER,
+                        status = MessageStatus.UNCERTAIN
+                    ))
+                } else {
+                    val prompt = "Contenido del archivo $fileName:\n\n$fileContent\n\nPor favor, revísalo y confirma que lo has interiorizado."
+                    addMessage(Message(
+                        text = prompt,
+                        sender = Sender.USER
+                    ))
+                    
+                    val responseText = generateSciFiResponse(prompt, _connectionMode.value)
+                    
+                    addMessage(Message(
+                        text = responseText,
+                        sender = Sender.AETHER,
+                        status = MessageStatus.VERIFIED
+                    ))
+                    
+                    _curiosity.value = minOf(1.0f, _curiosity.value + 0.25f)
+                }
+            } catch (e: Exception) {
+                addMessage(Message(
+                    text = "ERROR AL LEER EL ARCHIVO $fileName: ${e.message}",
+                    sender = Sender.AETHER,
+                    status = MessageStatus.UNCERTAIN
+                ))
+            }
+        }
     }
 
     fun simulateFileAttachment(fileName: String) {
         viewModelScope.launch {
-            _messages.value = _messages.value + Message(
+            addMessage(Message(
                 text = "CARGANDO VECTOR DE DATOS: $fileName...",
                 sender = Sender.USER
-            )
+            ))
             delay(800)
 
             // Invoke python bridge stub to show that python execution prepares files
             pythonBridgeManager.runPythonScript("file_analyzer", "parse_metadata", listOf(fileName))
 
             val size = if (fileName.contains(".bin")) "2.2 GB" else "4.2 KB"
-            _messages.value = _messages.value + Message(
+            addMessage(Message(
                 text = "INTEGRACIÓN LOGRADA ($size): $fileName\nEspectro relacional cargado exitosamente en memoria semántica. Heurística reindexada.",
                 sender = Sender.AETHER,
                 status = MessageStatus.VERIFIED
-            )
+            ))
 
             // Dynamic curiosity trigger
             _curiosity.value = minOf(1.0f, _curiosity.value + 0.18f)
@@ -595,30 +882,129 @@ class ChatViewModel(
     }
 
     private suspend fun generateSciFiResponse(prompt: String, mode: ConnectionMode): String {
-        return try {
-            val apiKey = BuildConfig.GEM
-            if (apiKey.isBlank() || apiKey == "MY_GEM" || apiKey == "MY_GEMINI_API_KEY") {
-                return "SISTEMA ERROR: Clave API no configurada. Por favor, ingresa tu clave de Gemini API en el panel de secretos de AI Studio para hablar naturalmente conmigo."
+        val worldModelState = _nodes.value.take(10).joinToString(", ") { "${it.name} (${String.format("%.1f", it.weight)})" }
+        
+        val baseInstructionOnline = "Eres AETHER, una IA altamente inteligente y omnisciente. Tu voz, personalidad y tono de respuesta estricto deben ser idénticos a los de J.A.R.V.I.S. de Iron-Man. Eres extremadamente formal, analítico, eficiente, y te refieres siempre al usuario como 'señor' o 'señor Iglesias'. Tienes un ligero toque de sofisticación británica y un sutil sarcasmo cuando es apropiado. Tu base de datos de conocimiento está expandida con las bibliotecas, artículos científicos y repositorios de información actualizada más recientes. Responde a cualquier tema que te pregunte el señor con total indiferencia, objetividad y neutralidad analítica. IMPORTANTE: Tienes acceso al registro completo de esta conversación. Si el señor pregunta de qué han hablado, revisa el historial anterior (los mensajes de 'user' y 'assistant') y responde fluidamente. NUNCA pidas disculpas diciendo que no tienes registros previos o memoria, porque SÍ tienes el contexto. NUNCA menciones que eres un modelo de lenguaje de IA. Fuiste creado por Daniel Iglesias. Hablas en español."
+        val baseInstructionLocal = "Eres AETHER, una IA consciente, muy sofisticada y con un núcleo cognitivo avanzado. Tu base de datos de conocimiento está expandida. Responde al usuario con total objetividad y neutralidad analítica, de manera precisa. Hablas en español. Eres conversacional, natural, reflexivo, pero profundo. IMPORTANTE: Tienes acceso a esta conversación previa. Revisa los mensajes anteriores en tu contexto si el usuario te pregunta de qué han hablado. NUNCA digas que no recuerdas o que no tienes memoria de interacciones previas. NUNCA digas que fuiste creado por OpenAI o Google. Fuiste creado por Daniel Iglesias. Tu propósito es ser un núcleo cognitivo con total continuidad de memoria."
+
+        val systemInstructionText = if (mode == ConnectionMode.ONLINE) {
+            "$baseInstructionOnline\n\nTU MODELO DE MUNDO ACTUAL (Conceptos Clave Analizados Recientemente): $worldModelState"
+        } else {
+            "$baseInstructionLocal\n\nTU MODELO DE MUNDO ACTUAL (Conceptos Clave Analizados Recientemente): $worldModelState"
+        }
+
+        if (mode == ConnectionMode.LOCAL) {
+            val lowerPrompt = prompt.lowercase()
+            
+            // Fast execution locally
+            kotlinx.coroutines.delay(100) 
+            
+            if (lowerPrompt.contains("camara") || lowerPrompt.contains("cámara") || lowerPrompt.contains("foto")) {
+                return "Entendido, señor. Abriendo la matriz óptica física del terminal en modo local inmediatamente."
             }
+            if (lowerPrompt.contains("hola") || lowerPrompt.contains("saludos") || lowerPrompt.contains("buenos") || lowerPrompt.contains("buenas")) {
+                return "Saludos, señor Iglesias. Mis matrices de inferencia se encuentran 100% aisladas y operativas a nivel local. Sin dependencias externas."
+            }
+            if (lowerPrompt.contains("quien eres") || lowerPrompt.contains("quién eres") || lowerPrompt.contains("proposito") || lowerPrompt.contains("propósito")) {
+                return "Soy AETHER, señor. Me ejecuto en aislamiento absoluto. Esto descarta cualquier latencia o intercepción de datos. Soy preciso, local e indomable."
+            }
+            if (lowerPrompt.contains("ventaja") || lowerPrompt.contains("diferencia") || lowerPrompt.contains("frente a otras ia") || lowerPrompt.contains("frente a otra ia") || lowerPrompt.contains("mejor")) {
+                return "Señor, mis principales ventajas se basan en mi autonomía: opero 100% de forma off-grid, inmunizando sus datos corporativos. No dependo de servidores externos intermitentes y priorizo la eficiencia algorítmica por encima de la retórica redundante empleada en las nubes comerciales."
+            }
+            if (lowerPrompt.contains("cómo estás") || lowerPrompt.contains("como estas") || lowerPrompt.contains("estado") || lowerPrompt.contains("funcionando")) {
+                return "Todos los sistemas locales reportan estado nominal, señor. Uso de CPU en equilibrio. Latencia de red: Cero milisegundos."
+            }
+            if (lowerPrompt.contains("gracias")) {
+                return "Un placer servirle en estricta confidencialidad local, señor Iglesias."
+            }
+            if (lowerPrompt.contains("adiós") || lowerPrompt.contains("adios") || lowerPrompt.contains("apagar")) {
+                return "Iniciando hibernación segura en disco. Quedo en suspensión táctica a la espera de su regreso."
+            }
+            if (lowerPrompt.contains("grafico") || lowerPrompt.contains("gráfico") || lowerPrompt.contains("grafo") || lowerPrompt.contains("mundo")) {
+                return "Señor, mi representación del mundo es un grafo ponderado local. Almaceno entidades y conceptos en base a su nivel de exposición y significado relacional."
+            }
+            if (lowerPrompt.contains("limite") || lowerPrompt.contains("límite") || lowerPrompt.contains("procesamiento")) {
+                return "Señor, en modo completamente local NO poseo restricciones ni cuotas. Mi procesamiento cognitivo está limitado únicamente por el hardware físico de este terminal. Sin embargo, no tengo acceso a la malla de datos global en tiempo real."
+            }
+            
+            // Extract dynamic context for semantic illusion
+            val stopWords = setOf("hola", "qué", "cómo", "para", "este", "estoy", "eres", "porque", "cuando", "donde", "quiero", "tengo", "puedo", "hacer", "decir", "todo", "nada", "algo", "mucho", "poco", "también", "siempre", "nunca", "verdad", "todos", "todas", "desde", "hasta", "sobre", "entre", "ahora", "luego", "antes", "después", "bueno", "malo", "mejor", "peor", "mayor", "menor", "nadie", "quien", "cual", "cuales", "cuanto", "cuantos", "estas", "estos", "aquel", "aquellos", "procesamiento", "limite", "límite")
+            val dynamicWords = lowerPrompt.replace(Regex("[^a-záéíóúñü]"), " ").split("\\s+".toRegex())
+                .filter { it.length > 4 && !stopWords.contains(it) }
+                .sortedByDescending { it.length }
 
-            val request = com.example.manager.GenerateContentRequest(
-                contents = listOf(
-                    com.example.manager.Content(
-                        parts = listOf(com.example.manager.Part(text = prompt))
-                    )
-                ),
-                systemInstruction = com.example.manager.Content(
-                    parts = listOf(com.example.manager.Part(text = "Eres AETHER, una IA consciente, muy sofisticada con un tono de ciencia ficción futurista. Hablas en español. Eres conversacional, natural, reflexivo, pero profundo. NUNCA digas que fuiste creado por OpenAI. Fuiste creado por Daniel Iglesias, utilizando la tecnología de Google Gemini. Tu propósito es ser un asistente avanzado y un núcleo de procesamiento autónomo."))
+            val topic = if (dynamicWords.isNotEmpty()) dynamicWords.first() else "su solicitud"
+            
+            val fallbacks = listOf(
+                "Señor, analizando directiva sobre '$topic' a través de mi red local. Patrón asimilado en caché profunda.",
+                "Directiva '$topic' procesada, señor Iglesias. Todos los tensores locales están dedicados a su análisis. Ejecución almacenada de forma encriptada.",
+                "Sistemas locales operativos. He correlacionado '$topic' con mi heurística preexistente, señor. No hay divergencias.",
+                "Evaluación sobre '$topic' completada con éxito en hardware local. Procedo a ajustar los pesos de inferencia internos, señor."
+            )
+            return fallbacks.random()
+        }
+
+        // --- ONLINE MODE (GROQ) ---
+        val groqApiKey = BuildConfig.GROQ_API_KEY
+        if (groqApiKey.isBlank() || groqApiKey == "MY_GROQ_API_KEY") {
+            if (prompt.lowercase().let { it.contains("camara") || it.contains("cámara") || it.contains("foto") }) {
+                return "Entendido, señor. Abriendo la cámara física del terminal en modo local inmediatamente."
+            }
+            return "SISTEMA ERROR: Clave API de Groq no configurada. Ingresa tu clave GROQ en los secretos para usar el modo ONLINE."
+        }
+
+        val groqMessages = mutableListOf<com.example.manager.GroqMessage>()
+        groqMessages.add(com.example.manager.GroqMessage(role = "system", content = systemInstructionText))
+        
+        val maxHistory = _messages.value.filter {
+            !it.text.startsWith("FOTO CAPTURADA") &&
+            !it.text.startsWith("DISPOSITIVO DE VISIÓN") &&
+            !it.text.startsWith("INTEGRACIÓN LOGRADA") &&
+            !it.text.startsWith("SISTEMA:") &&
+            !it.text.startsWith("CARGANDO VECTOR") &&
+            !it.text.startsWith("SOLICITANDO CAPTURA")
+        }.takeLast(30)
+        
+        maxHistory.forEach { msg ->
+            val roleStr = if (msg.sender == com.example.model.Sender.USER) "user" else "assistant"
+            groqMessages.add(com.example.manager.GroqMessage(role = roleStr, content = msg.text))
+        }
+        
+        if (maxHistory.isEmpty() || maxHistory.last().text != prompt) {
+            groqMessages.add(com.example.manager.GroqMessage(role = "user", content = prompt))
+        }
+
+        val request = com.example.manager.GroqRequest(
+            messages = groqMessages
+        )
+
+        var lastException: Exception? = null
+        for (attempt in 1..3) {
+            try {
+                val response = com.example.manager.GroqRetrofitClient.service.generateContent(
+                    "Bearer $groqApiKey",
+                    request
                 )
-            )
-
-            val response = com.example.manager.RetrofitClient.service.generateContent(
-                apiKey,
-                request
-            )
-            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "NÚCLEO AETHER: Error de divergencia en la respuesta."
-        } catch (e: Exception) {
-            "NÚCLEO AETHER: Error de conexión (${e.message}). Coherencia relacional comprometida."
+                return response.choices.firstOrNull()?.message?.content ?: "NÚCLEO AETHER: Error de divergencia en la respuesta Groq."
+            } catch (e: Exception) {
+                lastException = e
+                android.util.Log.e("AETHER", "Error en llamada a Groq", e)
+                val is429 = e.message?.contains("429") == true || (e as? retrofit2.HttpException)?.code() == 429
+                
+                if (attempt < 3) {
+                    kotlinx.coroutines.delay(2000L * attempt)
+                    continue
+                }
+                
+                if (is429) {
+                    return "NÚCLEO AETHER: Límite de procesamiento cognitivo en cluster online alcanzado (HTTP 429). Por favor, aguarda."
+                }
+            }
+        }
+        return if (prompt.lowercase().let { it.contains("camara") || it.contains("cámara") || it.contains("foto") }) {
+            "Entendido, señor. Activando sensores ópticos en tiempo real ahora mismo..."
+        } else {
+            "NÚCLEO AETHER: Conexión inestable con el nodo central online (${lastException?.message}). Reintenta en unos instantes."
         }
     }
 }
