@@ -14,8 +14,8 @@ android {
     applicationId = "com.daniiglesias.aether.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 25
-    versionName = "25.0"
+    versionCode = 44
+    versionName = "44.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -90,7 +90,7 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
-  // implementation(libs.coil.compose)
+  implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   implementation(libs.kotlinx.coroutines.android)

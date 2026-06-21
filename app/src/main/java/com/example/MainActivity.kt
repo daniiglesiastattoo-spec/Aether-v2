@@ -87,6 +87,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Init Knowledge Base
+        com.example.LocalKnowledgeLibrary.init(applicationContext)
+
         // Core Managers Instantiation for Constructor Injection
         val voiceManager = VoiceManagerImpl(applicationContext)
         val visionManager = VisionManagerImpl(applicationContext)
@@ -252,6 +255,8 @@ fun AELogoIcon(modifier: Modifier = Modifier) {
 fun AetherAppScreen(viewModel: ChatViewModel) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsStateWithLifecycle()
+    val isLiveMode by viewModel.isLiveMode.collectAsStateWithLifecycle()
+    val isAetherSpeaking by viewModel.isAetherSpeaking.collectAsStateWithLifecycle()
     val connectionMode by viewModel.connectionMode.collectAsStateWithLifecycle()
     val activeTab by viewModel.activeTab.collectAsStateWithLifecycle()
 
@@ -307,10 +312,16 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
     }
 
     LaunchedEffect(cameraActionTrigger) {
-        cameraActionTrigger?.let {
+        cameraActionTrigger?.let { prompt ->
             viewModel.selectTab(AetherTab.VISION)
+            kotlinx.coroutines.delay(300) // Give UI time to switch to the tab and initialize CameraPreview
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                launchPhysicalCamera(context)
+                val p = prompt.lowercase()
+                if (p.contains("ves") || p.contains("visor") || p.contains("foto") || p.contains("viendo") || p.contains(" ve") || p.contains("veo")) {
+                    viewModel.triggerCameraVision()
+                } else {
+                    launchPhysicalCamera(context)
+                }
             } else {
                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
@@ -510,6 +521,29 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // Live Mode Button 🌐
+                            IconButton(
+                                onClick = { 
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                        viewModel.toggleLiveMode()
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(if (isLiveMode) AccentCyan else DarkCardBg, CircleShape)
+                                    .border(1.dp, AccentCyan.copy(alpha = 0.5f), CircleShape)
+                                    .testTag("live_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.GraphicEq,
+                                    contentDescription = "Live Mode",
+                                    tint = if (isLiveMode) BackgroundDark else AccentCyan,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            
                             // File attachment 📎
                             IconButton(
                                 onClick = { showAttachmentDialog = true },
@@ -525,6 +559,25 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                                     tint = AccentCyan,
                                     modifier = Modifier.size(18.dp)
                                 )
+                            }
+
+                            // Stop Speaking Button (only shown when Aether is speaking)
+                            if (isAetherSpeaking) {
+                                IconButton(
+                                    onClick = { viewModel.stopSpeech() },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .background(DarkCardBg, CircleShape)
+                                        .border(1.dp, StatusRed.copy(alpha = 0.5f), CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.VolumeOff,
+                                        contentDescription = "Detener voz",
+                                        tint = StatusRed,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
                             }
 
                             // Microphone Button (🎤)
@@ -738,6 +791,17 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                     Text("CERRAR", color = StatusRed, fontFamily = FontFamily.Monospace)
                 }
             }
+        )
+    }
+
+    AnimatedVisibility(
+        visible = isLiveMode,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.9f),
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.9f)
+    ) {
+        LiveModeOverlay(
+            viewModel = viewModel,
+            isAetherSpeaking = isAetherSpeaking
         )
     }
 }
@@ -2225,12 +2289,37 @@ fun ChatBubbleContainer(message: Message) {
                     )
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
-                Text(
-                    text = message.text,
-                    color = if (isUser) BubbleUserText else BubbleAetherText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.testTag("msg_text_${message.id}")
-                )
+                Column {
+                    if (message.imageResourceId != null) {
+                        coil.compose.AsyncImage(
+                            model = message.imageResourceId,
+                            contentDescription = "Imagen adjunta de AETHER",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .padding(bottom = 8.dp),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                        )
+                    } else if (message.imageUrl != null) {
+                        coil.compose.AsyncImage(
+                            model = message.imageUrl,
+                            contentDescription = "Imagen generada por AETHER",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .padding(bottom = 8.dp),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+                    Text(
+                        text = message.text,
+                        color = if (isUser) BubbleUserText else BubbleAetherText,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.testTag("msg_text_${message.id}")
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(3.dp))
@@ -2268,6 +2357,154 @@ fun ChatBubbleContainer(message: Message) {
                     fontFamily = FontFamily.Monospace,
                     fontSize = 9.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun LiveModeOverlay(
+    viewModel: ChatViewModel,
+    isAetherSpeaking: Boolean
+) {
+    val isRecordingVoice by viewModel.isRecordingVoice.collectAsStateWithLifecycle()
+    val infiniteTransition = rememberInfiniteTransition(label = "sphere_pulse")
+    
+    // Animate a base scale depending on who is talking
+    val baseScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isAetherSpeaking) 1.25f else if (isRecordingVoice) 1.1f else 1.0f,
+        animationSpec = androidx.compose.animation.core.spring(dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy, stiffness = androidx.compose.animation.core.Spring.StiffnessLow),
+        label = "baseScale"
+    )
+
+    // Liquid fluctuation that breathes
+    val fluctuate by infiniteTransition.animateFloat(
+        initialValue = 0.95f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(if (isAetherSpeaking) 300 else 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "fluctuate"
+    )
+
+    val timePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * kotlin.math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "timePhase"
+    )
+
+    val currentScale = baseScale * fluctuate
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BackgroundDark.copy(alpha = 0.95f))
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // Neon Sphere Graphics
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val center = Offset(size.width / 2, size.height / 2)
+            val baseRadius = size.minDimension / 4f
+            val rad = baseRadius * currentScale
+
+            // Outer glow
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(AccentCyan.copy(alpha = 0.6f), Color.Transparent),
+                    center = center,
+                    radius = rad * 1.5f
+                ),
+                radius = rad * 1.5f,
+                center = center
+            )
+            
+            // Core sphere
+            drawCircle(
+                color = AccentCyan,
+                radius = rad,
+                center = center
+            )
+            
+            // Liquid rings
+            if (isAetherSpeaking || isRecordingVoice) {
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.3f),
+                    style = Stroke(width = 8.dp.toPx() * fluctuate),
+                    radius = rad * 1.1f,
+                    center = center
+                )
+                
+                // Equalizer Bars
+                val numBars = 48
+                val angleStep = (2f * kotlin.math.PI.toFloat()) / numBars
+                for (i in 0 until numBars) {
+                    val angle = i * angleStep
+                    
+                    // Complex wave calculation using timePhase
+                    val wave1 = kotlin.math.sin(angle * 3 + timePhase)
+                    val wave2 = kotlin.math.cos(angle * 5 - timePhase * 1.5f)
+                    val wave3 = kotlin.math.sin(angle * 7 + timePhase * 2f)
+                    
+                    // Combine waves and only take positive values for bar extension
+                    val rawFluctuation = ((wave1 + wave2 + wave3) / 3f)
+                    val normalizedFluctuation = (rawFluctuation + 1f) / 2f // 0f to 1f
+                    
+                    val activeBoost = if (isAetherSpeaking) 2.5f else if (isRecordingVoice) 1.5f else 0.5f
+                    val barFluctuation = normalizedFluctuation * activeBoost * ((fluctuate - 0.9f) * 10f)
+                    
+                    val minBarLength = 4.dp.toPx()
+                    val barLength = minBarLength + (25.dp.toPx() * barFluctuation.coerceAtLeast(0f))
+                    
+                    val startRadius = rad * 1.25f
+                    val endRadius = startRadius + barLength
+                    
+                    val startX = center.x + kotlin.math.cos(angle) * startRadius
+                    val startY = center.y + kotlin.math.sin(angle) * startRadius
+                    val endX = center.x + kotlin.math.cos(angle) * endRadius
+                    val endY = center.y + kotlin.math.sin(angle) * endRadius
+                    
+                    // Dynamic opacity and stroke width based on amplitude
+                    val barOpacity = 0.4f + (0.6f * (barLength / (30.dp.toPx()))).coerceIn(0f, 0.6f)
+                    
+                    drawLine(
+                        color = AccentCyan.copy(alpha = barOpacity),
+                        start = Offset(startX, startY),
+                        end = Offset(endX, endY),
+                        strokeWidth = 3.dp.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                }
+            }
+        }
+        
+        // Status text
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 60.dp)
+        ) {
+            Text(
+                text = if (isAetherSpeaking) "AETHER ESTÁ HABLANDO..." else if (isRecordingVoice) "ESCUCHANDO..." else "LISTO",
+                color = AccentCyan,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                letterSpacing = 2.sp
+            )
+            Spacer(modifier = Modifier.height(30.dp))
+            OutlinedButton(
+                onClick = { viewModel.toggleLiveMode() },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed),
+                border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed)
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "Cerrar Live Mode")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("FINALIZAR")
             }
         }
     }

@@ -20,5 +20,8 @@ data class Message(
     val text: String,
     val sender: Sender,
     val timestampMs: Long = System.currentTimeMillis(),
-    val status: MessageStatus = MessageStatus.VERIFIED
+    val status: MessageStatus = MessageStatus.VERIFIED,
+    val imageResourceId: Int? = null,
+    val imageUrl: String? = null,
+    val fileUri: String? = null
 )

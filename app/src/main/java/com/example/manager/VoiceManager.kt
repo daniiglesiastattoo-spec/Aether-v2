@@ -21,6 +21,7 @@ interface VoiceManager {
     fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit)
     fun stopListening()
     fun speak(text: String, isOnlineMode: Boolean = false, onComplete: () -> Unit = {})
+    fun stopSpeaking()
     fun shutdown()
 }
 
@@ -134,6 +135,10 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
             }
         })
         textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+    }
+
+    override fun stopSpeaking() {
+        textToSpeech?.stop()
     }
 
     override fun shutdown() {
