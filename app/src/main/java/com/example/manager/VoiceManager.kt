@@ -18,10 +18,11 @@ import java.util.Locale
  * with Android's SpeechRecognizer (STT) and TextToSpeech (TTS) engines.
  */
 interface VoiceManager {
-    fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit)
+    fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit, onSpeechDetected: (String) -> Unit = {})
     fun stopListening()
     fun speak(text: String, isOnlineMode: Boolean = false, onComplete: () -> Unit = {})
     fun stopSpeaking()
+    fun setLiveMode(isActive: Boolean)
     fun shutdown()
 }
 
@@ -39,7 +40,12 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
     init {
         textToSpeech = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val langResult = textToSpeech?.setLanguage(Locale("es", "ES"))
+                val audioAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                textToSpeech?.setAudioAttributes(audioAttributes)
+                val langResult = textToSpeech?.setLanguage(java.util.Locale.Builder().setLanguage("es").setRegion("ES").build())
                 if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
                     textToSpeech?.setLanguage(Locale.getDefault())
                 }
@@ -48,7 +54,7 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
         }
     }
 
-    override fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit) {
+    override fun startListening(onResult: (String) -> Unit, onError: (String) -> Unit, onSpeechDetected: (String) -> Unit) {
         mainHandler.post {
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                 onError("No disponible")
@@ -62,12 +68,16 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                // Use VOICE_COMMUNICATION for hardware Acoustic Echo Cancellation
+                putExtra("android.speech.extra.AUDIO_SOURCE", android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
             }
 
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
+                override fun onBeginningOfSpeech() {
+                    // No interrumpir al primer ruido para bajar la sensibilidad
+                }
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
@@ -94,7 +104,17 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
                         onError("Vacío")
                     }
                 }
-                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) {
+                        val text = matches[0].trim()
+                        // Solo interrumpir si de verdad ha reconocido alguna palabra (baja sensibilidad)
+                        // Solo interrumpir si la frase parcial es significativa
+                        if (text.length > 5 && text.split(" ").size >= 2) {
+                            mainHandler.post { onSpeechDetected(text) }
+                        }
+                    }
+                }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
 
@@ -133,14 +153,25 @@ class VoiceManagerImpl(private val context: Context) : VoiceManager {
             override fun onError(utteranceId: String?) {
                 mainHandler.post { onComplete() }
             }
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                mainHandler.post { onComplete() }
+            }
         })
-        textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        val cleanText = text.replace("*", "")
+        textToSpeech?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }
 
     override fun stopSpeaking() {
         textToSpeech?.stop()
     }
 
+    override fun setLiveMode(isActive: Boolean) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        // Volvemos a la vía normal (media) sin forzar modo comunicación
+        audioManager.mode = android.media.AudioManager.MODE_NORMAL
+        audioManager.isSpeakerphoneOn = false
+    }
+    
     override fun shutdown() {
         textToSpeech?.stop()
         textToSpeech?.shutdown()

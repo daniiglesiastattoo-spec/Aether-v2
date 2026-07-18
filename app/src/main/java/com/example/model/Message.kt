@@ -11,7 +11,8 @@ enum class Sender {
 
 enum class MessageStatus {
     VERIFIED,  // Displays "VERIFICADA" in green
-    UNCERTAIN  // Displays "INCIERTO" in yellow/amber
+    UNCERTAIN, // Displays "INCIERTO" in yellow/amber
+    CONTRADICTED // Displays "CONTRADICE FUENTE" in red
 }
 
 @Entity(tableName = "messages")

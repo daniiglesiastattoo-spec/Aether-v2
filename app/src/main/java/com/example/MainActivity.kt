@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.provider.MediaStore
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -31,6 +32,7 @@ import com.google.accompanist.permissions.isGranted
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,7 +48,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
@@ -61,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -99,6 +102,7 @@ class MainActivity : ComponentActivity() {
         val messageRepository = com.example.db.MessageRepository(database.messageDao())
 
         val viewModel = ChatViewModel(
+            context = applicationContext,
             voiceManager = voiceManager,
             visionManager = visionManager,
             pythonBridgeManager = pythonBridgeManager,
@@ -266,6 +270,15 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
 
+
+    val focusManager = LocalFocusManager.current
+    androidx.compose.runtime.LaunchedEffect(isLiveMode) {
+        if (isLiveMode) {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        }
+    }
+    
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: android.net.Uri? ->
@@ -288,6 +301,9 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
 
     val cameraActionTrigger by viewModel.cameraActionTrigger.collectAsStateWithLifecycle()
     val externalLinkTrigger by viewModel.externalLinkTrigger.collectAsStateWithLifecycle()
+    val openAppTrigger by viewModel.openAppTrigger.collectAsStateWithLifecycle()
+    val calendarEventTrigger by viewModel.calendarEventTrigger.collectAsStateWithLifecycle()
+    val systemActionTrigger by viewModel.systemActionTrigger.collectAsStateWithLifecycle()
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -296,6 +312,60 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
             launchPhysicalCamera(context)
         } else {
             Toast.makeText(context, "Se requiere permiso de cámara para abrir la cámara física", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(openAppTrigger) {
+        openAppTrigger?.let { appName ->
+            try {
+                val packageManager = context.packageManager
+                var intent = when (appName) {
+                    "instagram" -> packageManager.getLaunchIntentForPackage("com.instagram.android")
+                    "facebook" -> packageManager.getLaunchIntentForPackage("com.facebook.katana")
+                    "tiktok" -> packageManager.getLaunchIntentForPackage("com.zhiliaoapp.musically")
+                    "gmail" -> packageManager.getLaunchIntentForPackage("com.google.android.gm")
+                    "whatsapp" -> packageManager.getLaunchIntentForPackage("com.whatsapp")
+                    "spotify" -> packageManager.getLaunchIntentForPackage("com.spotify.music")
+                    "alarma", "reloj" -> Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS)
+                    else -> null
+                }
+                
+                if (intent == null) {
+                    val packages = packageManager.getInstalledApplications(android.content.pm.PackageManager.GET_META_DATA)
+                    for (packageInfo in packages) {
+                        val name = packageManager.getApplicationLabel(packageInfo).toString().lowercase()
+                        if (name.contains(appName)) {
+                            intent = packageManager.getLaunchIntentForPackage(packageInfo.packageName)
+                            if (intent != null) break
+                        }
+                    }
+                }
+                
+                if (intent != null) {
+                    context.startActivity(intent)
+                } else {
+                    Toast.makeText(context, "Aplicación '$appName' no encontrada en el sistema.", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "No se pudo abrir la aplicación: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+            viewModel.clearAppOpenTrigger()
+        }
+    }
+
+    LaunchedEffect(calendarEventTrigger) {
+        calendarEventTrigger?.let { params ->
+            try {
+                val intent = Intent(Intent.ACTION_INSERT).apply {
+                    data = android.provider.CalendarContract.Events.CONTENT_URI
+                    putExtra(android.provider.CalendarContract.Events.TITLE, params.title)
+                    putExtra(android.provider.CalendarContract.Events.DESCRIPTION, params.description)
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(context, "No se pudo agendar en el calendario exterior: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+            viewModel.clearCalendarEventTrigger()
         }
     }
 
@@ -308,6 +378,114 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                 Toast.makeText(context, "No se pudo abrir el enlace", Toast.LENGTH_SHORT).show()
             }
             viewModel.clearExternalLinkTrigger()
+        }
+    }
+
+    LaunchedEffect(systemActionTrigger) {
+        systemActionTrigger?.let { action ->
+            try {
+                when (action) {
+                    "flashlight_on" -> {
+                        val cameraManager = context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        val cameraId = cameraManager.cameraIdList[0]
+                        cameraManager.setTorchMode(cameraId, true)
+                        Toast.makeText(context, "Linterna encendida", Toast.LENGTH_SHORT).show()
+                    }
+                    "flashlight_off" -> {
+                        val cameraManager = context.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                        val cameraId = cameraManager.cameraIdList[0]
+                        cameraManager.setTorchMode(cameraId, false)
+                        Toast.makeText(context, "Linterna apagada", Toast.LENGTH_SHORT).show()
+                    }
+                    "battery_status" -> {
+                        val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { ifilter ->
+                            context.registerReceiver(null, ifilter)
+                        }
+                        val level: Int = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                        val scale: Int = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+                        val batteryPct = level * 100 / scale.toFloat()
+                        Toast.makeText(context, "Nivel de batería: ${batteryPct.toInt()}%", Toast.LENGTH_LONG).show()
+                    }
+                    "system_info" -> {
+                        val model = android.os.Build.MODEL
+                        val osVersion = android.os.Build.VERSION.RELEASE
+                        Toast.makeText(context, "Sistema: $model | Android $osVersion", Toast.LENGTH_LONG).show()
+                    }
+                    "network_status" -> {
+                        val connectivityManager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                        val network = connectivityManager.activeNetwork
+                        val capabilities = connectivityManager.getNetworkCapabilities(network)
+                        val isConnected = capabilities != null && capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        val type = if (capabilities != null) {
+                            when {
+                                capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+                                capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "MÓVIL"
+                                capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
+                                else -> "OTRA"
+                            }
+                        } else "Desconocida"
+                        Toast.makeText(context, "Estado de red: ${if(isConnected) "Conectado ($type)" else "Desconectado"}", Toast.LENGTH_LONG).show()
+                    }
+                    "volume_max" -> {
+                        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC), 0)
+                        Toast.makeText(context, "Volumen al máximo", Toast.LENGTH_SHORT).show()
+                    }
+                    "volume_mute" -> {
+                        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+                        Toast.makeText(context, "Audio silenciado", Toast.LENGTH_SHORT).show()
+                    }
+                    "vibrate" -> {
+                        val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+                            vibratorManager.defaultVibrator
+                        } else {
+                            @Suppress("DEPRECATION")
+                            context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+                        }
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(500, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        }
+                        Toast.makeText(context, "Vibración activada", Toast.LENGTH_SHORT).show()
+                    }
+                    "storage_info" -> {
+                        val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+                        val bytesAvailable = stat.blockSizeLong * stat.availableBlocksLong
+                        val megAvailable = bytesAvailable / (1024 * 1024)
+                        Toast.makeText(context, "Almacenamiento libre: ${megAvailable} MB", Toast.LENGTH_LONG).show()
+                    }
+                    "ram_info" -> {
+                        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                        val memoryInfo = android.app.ActivityManager.MemoryInfo()
+                        activityManager.getMemoryInfo(memoryInfo)
+                        val availMemMB = memoryInfo.availMem / (1024 * 1024)
+                        Toast.makeText(context, "RAM disponible: ${availMemMB} MB", Toast.LENGTH_LONG).show()
+                    }
+                    "bluetooth_status" -> {
+                        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
+                        val bluetoothAdapter = bluetoothManager.adapter
+                        if (bluetoothAdapter == null) {
+                            Toast.makeText(context, "Bluetooth no soportado", Toast.LENGTH_SHORT).show()
+                        } else {
+                            try {
+                                val isEnabled = bluetoothAdapter.isEnabled
+                                Toast.makeText(context, "Bluetooth: ${if (isEnabled) "Activado" else "Desactivado"}", Toast.LENGTH_LONG).show()
+                            } catch (e: SecurityException) {
+                                Toast.makeText(context, "Permiso Bluetooth denegado", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    "open_settings" -> {
+                        val intent = Intent(android.provider.Settings.ACTION_SETTINGS)
+                        context.startActivity(intent)
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                e.printStackTrace()
+            }
+            viewModel.clearSystemActionTrigger()
         }
     }
 
@@ -372,7 +550,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                                 letterSpacing = 3.sp
                             )
                             Text(
-                                text = "IA LOCAL CONSCIENTE",
+                                text = "ASISTENTE IA AVANZADO",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontSize = 8.sp,
                                 color = TextPrincipal.copy(alpha = 0.6f),
@@ -441,7 +619,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                     },
                     divider = {}
                 ) {
-                    val tabTitles = listOf("CHAT", "MENTE", "VERITAS", "AGENTES", "VISIÓN")
+                    val tabTitles = listOf("CHAT", "MENTE", "VERITAS", "AGENTES", "VISIÓN", "SISTEMA")
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = activeTab.ordinal == index,
@@ -571,7 +749,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                                         .border(1.dp, StatusRed.copy(alpha = 0.5f), CircleShape)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.VolumeOff,
+                                        imageVector = Icons.AutoMirrored.Filled.VolumeOff,
                                         contentDescription = "Detener voz",
                                         tint = StatusRed,
                                         modifier = Modifier.size(18.dp)
@@ -688,6 +866,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                     AetherTab.VERITAS -> VeritasTabContent(viewModel = viewModel)
                     AetherTab.AGENTS -> AgentsTabContent(viewModel = viewModel)
                     AetherTab.VISION -> VisionTabContent(viewModel = viewModel)
+                    AetherTab.SYSTEM -> SystemTabContent(viewModel = viewModel)
                 }
             }
         }
@@ -746,7 +925,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.InsertDriveFile,
+                                imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                                 contentDescription = "File Type",
                                 tint = AccentCyan.copy(alpha = 0.7f),
                                 modifier = Modifier.size(22.dp)
@@ -899,6 +1078,8 @@ fun ChatTabContent(
     }
 }
 
+data class ProjectedNode(val activeIndex: Int, val screenX: Float, val screenY: Float, val z: Float, val scale: Float)
+
 @Composable
 fun WorldModelGraph(nodes: List<com.example.model.NodeItem>) {
     if (nodes.isEmpty()) {
@@ -907,6 +1088,17 @@ fun WorldModelGraph(nodes: List<com.example.model.NodeItem>) {
         }
         return
     }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "sphere")
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = Math.PI.toFloat() * 2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(20000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(260.dp)) {
         val widthPx = constraints.maxWidth.toFloat()
@@ -923,35 +1115,45 @@ fun WorldModelGraph(nodes: List<com.example.model.NodeItem>) {
         val dpRadius = (dpHeight / 2) - 30.dp
 
         val numNodes = nodes.size
-        val angleStep = Math.PI * 2 / numNodes
+        val phi = Math.PI * (3 - Math.sqrt(5.0))
 
-        val nodePositions = remember(nodes, widthPx, heightPx) {
+        val projectedNodes = remember(nodes, rotation) {
             nodes.mapIndexed { index, _ ->
-                val angle = index * angleStep
-                val x = centerX + radius * Math.cos(angle).toFloat()
-                val y = centerY + radius * Math.sin(angle).toFloat()
-                Offset(x, y)
+                val y = 1f - (index / maxOf(1f, numNodes - 1f)) * 2f
+                val radiusAtY = Math.sqrt(maxOf(0.0, 1.0 - y * y)).toFloat()
+                val theta = phi * index
+                
+                val baseX = (Math.cos(theta) * radiusAtY).toFloat()
+                val baseZ = (Math.sin(theta) * radiusAtY).toFloat()
+                
+                val rotatedX = baseX * Math.cos(rotation.toDouble()).toFloat() - baseZ * Math.sin(rotation.toDouble()).toFloat()
+                val rotatedZ = baseX * Math.sin(rotation.toDouble()).toFloat() + baseZ * Math.cos(rotation.toDouble()).toFloat()
+                
+                val scale = 1.0f / (1.2f + rotatedZ * 0.4f)
+                val screenX = rotatedX * scale
+                val screenY = y * scale
+                
+                ProjectedNode(index, screenX, screenY, rotatedZ, scale)
             }
-        }
-
-        val dpNodePositions = nodes.mapIndexed { index, _ ->
-            val angle = index * angleStep
-            val xOffset = dpRadius * Math.cos(angle).toFloat()
-            val yOffset = dpRadius * Math.sin(angle).toFloat()
-            Pair(dpCenterX + xOffset, dpCenterY + yOffset)
         }
 
         // Connections
         Canvas(modifier = Modifier.fillMaxSize()) {
             for (i in 0 until numNodes) {
-                val p1 = nodePositions[i]
-                // Draw line to the next 2 nodes, to make it look like a web
+                val node1 = projectedNodes[i]
+                val p1 = Offset(centerX + node1.screenX * radius, centerY + node1.screenY * radius)
+                
                 for (j in 1..2) {
                     if (numNodes > j) {
                         val nextIdx = (i + j) % numNodes
-                        val p2 = nodePositions[nextIdx]
+                        val node2 = projectedNodes[nextIdx]
+                        val p2 = Offset(centerX + node2.screenX * radius, centerY + node2.screenY * radius)
+                        
+                        val avgZ = (node1.z + node2.z) / 2f
+                        val lineAlpha = if (avgZ > 0) 0.10f else 0.35f
+
                         drawLine(
-                            color = AccentCyan.copy(alpha = 0.3f),
+                            color = AccentCyan.copy(alpha = lineAlpha),
                             start = p1,
                             end = p2,
                             strokeWidth = 1.dp.toPx()
@@ -962,16 +1164,24 @@ fun WorldModelGraph(nodes: List<com.example.model.NodeItem>) {
         }
 
         // Nodes
-        nodes.forEachIndexed { index, node ->
-            val pos = dpNodePositions[index]
+        val sortedNodes = projectedNodes.sortedByDescending { it.z }
+        sortedNodes.forEach { projectedNode ->
+            val node = nodes[projectedNode.activeIndex]
+            val xOffset = dpCenterX + (dpRadius * projectedNode.screenX)
+            val yOffset = dpCenterY + (dpRadius * projectedNode.screenY)
+            val zScale = projectedNode.scale
+
             Box(
                 modifier = Modifier
-                    .offset(x = pos.first - 40.dp, y = pos.second - 20.dp)
+                    .offset(x = xOffset - 40.dp, y = yOffset - 20.dp)
                     .width(80.dp)
                     .height(40.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.scale(zScale)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(10.dp + (node.weight * 2).dp)
@@ -1708,9 +1918,12 @@ fun AgentsTabContent(viewModel: ChatViewModel) {
 
                 val queries = listOf(
                     "1-Calculadora",
-                    "2-reloj y fecha",
-                    "3-Fisica",
-                    "4-Galeria"
+                    "2-Reloj y fecha",
+                    "3-Física",
+                    "4-Galería",
+                    "5-Google Maps",
+                    "6-Abrir App",
+                    "7-JARVIS System"
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1726,7 +1939,7 @@ fun AgentsTabContent(viewModel: ChatViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Launch,
+                                imageVector = Icons.AutoMirrored.Filled.Launch,
                                 contentDescription = null,
                                 tint = AccentCyan,
                                 modifier = Modifier.size(14.dp)
@@ -2236,6 +2449,121 @@ fun ProgressIndicatorRow(
 }
 
 @Composable
+fun SystemTabContent(viewModel: ChatViewModel) {
+    val isLocalModelAvailable by viewModel.isLocalModelAvailable.collectAsStateWithLifecycle()
+    val isImporting by viewModel.isImportingModel.collectAsStateWithLifecycle()
+    val progress by viewModel.importProgress.collectAsStateWithLifecycle()
+    val error by viewModel.importError.collectAsStateWithLifecycle()
+
+
+    val filePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.importLocalModel(it) }
+    }
+
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        if (showDeleteConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirmation = false },
+                title = { Text("¿Eliminar Modelo Local?") },
+                text = { Text("¿Estás seguro de que deseas eliminar el modelo descargado? Ocupa unos 550MB.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.deleteLocalModel()
+                        showDeleteConfirmation = false
+                    }) {
+                        Text("Eliminar", color = Color.Red)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirmation = false }) {
+                        Text("Cancelar")
+                    }
+                },
+                containerColor = BackgroundDark,
+                titleContentColor = AccentCyan,
+                textContentColor = Color.White
+            )
+        }
+
+        Icon(
+            imageVector = Icons.Default.Settings,
+            contentDescription = "System",
+            tint = AccentCyan,
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "SISTEMA AETHER",
+            style = MaterialTheme.typography.titleLarge,
+            color = AccentCyan,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = BackgroundDark.copy(alpha = 0.5f)),
+            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.3f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Modelo Local (Gemma 3 1B)",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                if (isImporting) {
+                    Text("Importando modelo...", color = Color.Gray, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = AccentCyan,
+                        trackColor = Color.DarkGray
+                    )
+                    Text("${(progress * 100).toInt()}%", color = AccentCyan, fontSize = 12.sp, modifier = Modifier.align(Alignment.End))
+                } else if (isLocalModelAvailable) {
+                    Text("Estado: Instalado y listo.", color = Color.Green, fontSize = 14.sp)
+                    val file = com.example.manager.LocalLlmEngine.getModelFile(viewModel.context)
+                    Text("Tamaño: ${file.length() / (1024 * 1024)} MB", color = Color.Gray, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showDeleteConfirmation = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.7f))
+                    ) {
+                        Text("Eliminar Modelo")
+                    }
+                } else {
+                    Text("Estado: No instalado.", color = Color.Red, fontSize = 14.sp)
+                    if (error != null) {
+                        Text(error!!, color = Color.Red, fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = Color.Black)
+                    ) {
+                        Text("IMPORTAR MODELO (.task)", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ChatBubbleContainer(message: Message) {
     val isUser = message.sender == Sender.USER
     val format = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -2331,19 +2659,25 @@ fun ChatBubbleContainer(message: Message) {
                 modifier = Modifier.padding(horizontal = 4.dp)
             ) {
                 if (!isUser) {
-                    val isVerified = message.status == MessageStatus.VERIFIED
+                    val statusColor = when (message.status) {
+                        MessageStatus.VERIFIED -> StatusGreen
+                        MessageStatus.UNCERTAIN -> StatusAmber
+                        MessageStatus.CONTRADICTED -> StatusRed
+                    }
+                    val statusText = when (message.status) {
+                        MessageStatus.VERIFIED -> "RESPALDADA"
+                        MessageStatus.UNCERTAIN -> "SIN RESPALDO"
+                        MessageStatus.CONTRADICTED -> "CONTRADICE FUENTE"
+                    }
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(3.dp))
-                            .background(
-                                if (isVerified) StatusGreen.copy(alpha = 0.12f)
-                                else StatusAmber.copy(alpha = 0.12f)
-                            )
+                            .background(statusColor.copy(alpha = 0.12f))
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = if (isVerified) "VERIFICADA" else "INCIERTO",
-                            color = if (isVerified) StatusGreen else StatusAmber,
+                            text = statusText,
+                            color = statusColor,
                             style = MaterialTheme.typography.labelSmall,
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold
@@ -2367,6 +2701,7 @@ fun LiveModeOverlay(
     viewModel: ChatViewModel,
     isAetherSpeaking: Boolean
 ) {
+    val isLiveModePaused by viewModel.isLiveModePaused.collectAsStateWithLifecycle()
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsStateWithLifecycle()
     val infiniteTransition = rememberInfiniteTransition(label = "sphere_pulse")
     
@@ -2424,12 +2759,64 @@ fun LiveModeOverlay(
                 center = center
             )
             
-            // Core sphere
+            // Core sphere (3D Shaded Base)
             drawCircle(
-                color = AccentCyan,
+                brush = Brush.radialGradient(
+                    colors = listOf(AccentCyan.copy(alpha = 0.9f), AccentCyan.copy(alpha = 0.3f), Color.Transparent),
+                    center = Offset(center.x - rad * 0.3f, center.y - rad * 0.3f), // offset light source
+                    radius = rad * 1.2f
+                ),
                 radius = rad,
                 center = center
             )
+            
+            // Sphere Outline
+            drawCircle(
+                color = AccentCyan,
+                radius = rad,
+                center = center,
+                style = Stroke(width = 2.dp.toPx())
+            )
+            
+            // 3D Wireframe / Rotating Grid
+            val numMeridians = 8
+            for (i in 0 until numMeridians) {
+                val angleOffset = (i * Math.PI / numMeridians).toFloat()
+                // Map angleOffset + timePhase to an ellipse width
+                val currentAngle = (angleOffset + timePhase * 0.6f) % Math.PI
+                val cosVal = kotlin.math.cos(currentAngle).toFloat()
+                val width = rad * kotlin.math.abs(cosVal)
+                
+                if (width > 0.5f) {
+                    drawOval(
+                        color = Color.White.copy(alpha = 0.25f),
+                        topLeft = Offset(center.x - width, center.y - rad),
+                        size = androidx.compose.ui.geometry.Size(width * 2f, rad * 2f),
+                        style = Stroke(width = 1.dp.toPx())
+                    )
+                } else {
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.25f),
+                        start = Offset(center.x, center.y - rad),
+                        end = Offset(center.x, center.y + rad),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+            }
+            
+            // Static latitudes (parallels)
+            val numParallels = 6
+            for (i in 1..numParallels) {
+                val yOffset = rad * (-1f + 2f * i / (numParallels + 1))
+                val parallelRad = kotlin.math.sqrt(rad * rad - yOffset * yOffset)
+                val ovalHeight = parallelRad * 0.3f
+                drawOval(
+                    color = Color.White.copy(alpha = 0.2f),
+                    topLeft = Offset(center.x - parallelRad, center.y + yOffset - ovalHeight / 2f),
+                    size = androidx.compose.ui.geometry.Size(parallelRad * 2f, ovalHeight),
+                    style = Stroke(width = 1.dp.toPx())
+                )
+            }
             
             // Liquid rings
             if (isAetherSpeaking || isRecordingVoice) {
@@ -2489,22 +2876,34 @@ fun LiveModeOverlay(
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 60.dp)
         ) {
             Text(
-                text = if (isAetherSpeaking) "AETHER ESTÁ HABLANDO..." else if (isRecordingVoice) "ESCUCHANDO..." else "LISTO",
-                color = AccentCyan,
+                text = if (isLiveModePaused) "PAUSADO" else if (isAetherSpeaking) "AETHER ESTÁ HABLANDO..." else if (isRecordingVoice) "ESCUCHANDO..." else "LISTO",
+                color = if (isLiveModePaused) Color.Gray else AccentCyan,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
                 letterSpacing = 2.sp
             )
             Spacer(modifier = Modifier.height(30.dp))
-            OutlinedButton(
-                onClick = { viewModel.toggleLiveMode() },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed),
-                border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed)
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Cerrar Live Mode")
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("FINALIZAR")
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                OutlinedButton(
+                    onClick = { viewModel.toggleLiveModePause() },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = if (isLiveModePaused) AccentCyan else Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isLiveModePaused) AccentCyan else Color.White)
+                ) {
+                    Icon(if (isLiveModePaused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = "Pausa")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (isLiveModePaused) "REANUDAR" else "PAUSAR")
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.toggleLiveMode() },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Cerrar Live Mode")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("FINALIZAR")
+                }
             }
         }
     }

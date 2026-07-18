@@ -15,7 +15,9 @@ data class GroqRequest(
     val model: String = "llama-3.3-70b-versatile",
     val messages: List<GroqMessage>,
     val max_tokens: Int = 1024,
-    val temperature: Double = 0.7
+    val temperature: Double = 0.7,
+    val top_p: Double = 0.9,
+    val stop: List<String> = listOf("\n\nUser:")
 )
 
 data class GroqMessage(

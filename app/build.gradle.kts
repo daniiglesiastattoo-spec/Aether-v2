@@ -14,8 +14,8 @@ android {
     applicationId = "com.daniiglesias.aether.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 44
-    versionName = "44.0"
+    versionCode = 131
+    versionName = "131.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -76,6 +76,7 @@ dependencies {
   implementation(libs.androidx.camera.core)
   implementation(libs.androidx.camera.lifecycle)
   implementation(libs.androidx.camera.view)
+  implementation("com.google.mediapipe:tasks-vision:0.10.14")
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.compose.material3)
@@ -90,6 +91,7 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation("com.google.mediapipe:tasks-genai:0.10.14")
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

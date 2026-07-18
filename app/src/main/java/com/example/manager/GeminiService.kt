@@ -13,15 +13,24 @@ import java.util.concurrent.TimeUnit
 
 data class GenerateContentRequest(
     val contents: List<Content>,
-    @Json(name = "system_instruction")
+    @field:Json(name = "system_instruction")
     val systemInstruction: Content? = null,
-    val tools: List<Tool>? = null
+    val tools: List<Tool>? = null,
+    val generationConfig: GenerationConfig? = null
+)
+
+data class GenerationConfig(
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val topK: Int? = null,
+    @field:Json(name = "stop_sequences")
+    val stopSequences: List<String>? = null
 )
 
 data class Tool(
-    @Json(name = "google_search")
+    @field:Json(name = "google_search")
     val googleSearch: GoogleSearch? = null,
-    @Json(name = "googleSearch")
+    @field:Json(name = "googleSearch")
     val googleSearchCamel: GoogleSearch? = null
 )
 
@@ -34,12 +43,12 @@ data class Content(
 
 data class Part(
     val text: String? = null,
-    @Json(name = "inline_data")
+    @field:Json(name = "inline_data")
     val inlineData: Blob? = null
 )
 
 data class Blob(
-    @Json(name = "mime_type")
+    @field:Json(name = "mime_type")
     val mimeType: String,
     val data: String
 )

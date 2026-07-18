@@ -7,10 +7,12 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.example.model.Message
 
-@Database(entities = [Message::class], version = 4, exportSchema = false)
+@Database(entities = [Message::class, com.example.model.Reflexion::class, com.example.model.EvolutionProposal::class], version = 6, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
+    abstract fun reflexionDao(): ReflexionDao
+    abstract fun evolutionProposalDao(): EvolutionProposalDao
 
     companion object {
         @Volatile
@@ -23,7 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "aether_db_v4"
                 )
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration(true)
                 .build()
                 INSTANCE = instance
                 instance
