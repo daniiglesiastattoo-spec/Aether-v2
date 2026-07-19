@@ -107,6 +107,17 @@ Responde SOLO con un objeto JSON, sin markdown ni texto extra:
                 
                 db.reflexionDao().insertReflexion(reflexion)
                 Log.d(TAG, "Reflexion generada y guardada: $conclusion")
+
+                val tagsList = if (json.has("tags")) {
+                    val tagsArray = json.getJSONArray("tags")
+                    (0 until tagsArray.length()).map { tagsArray.getString(it) }
+                } else emptyList()
+                com.example.core.AetherCoreService.aplicarReflexion(
+                    foco = json.optString("resumen", "Procesando entorno"),
+                    prioridades = tagsList,
+                    conclusion = conclusion
+                )
+
                 return conclusion
             }
         } catch (e: Exception) {

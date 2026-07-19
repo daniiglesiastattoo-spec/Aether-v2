@@ -90,6 +90,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Arrancar Aether Core Service
+        com.example.core.AetherCoreService.arrancar(this)
+
         // Init Knowledge Base
         com.example.LocalKnowledgeLibrary.init(applicationContext)
 
@@ -189,6 +192,7 @@ fun AetherCameraPreview(
                             }
 
                             override fun onError(exception: ImageCaptureException) {
+                                com.example.core.AetherCoreService.registrarError("vision", "Error en captura: ${exception.message}")
                                 android.util.Log.e("AetherCamera", "onError during image capture", exception)
                                 if (continuation.isActive) {
                                     continuation.resume(null)
@@ -197,6 +201,7 @@ fun AetherCameraPreview(
                         }
                     )
                 } catch (e: Exception) {
+                    com.example.core.AetherCoreService.registrarError("vision", "Exception starting image capture: ${e.message}")
                     android.util.Log.e("AetherCamera", "Exception starting image capture", e)
                     if (continuation.isActive) {
                         continuation.resume(null)

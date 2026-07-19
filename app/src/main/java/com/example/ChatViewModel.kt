@@ -407,6 +407,8 @@ class ChatViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         
+        com.example.core.AetherCoreService.registrarInteraccion()
+        
         val msgLower = text.lowercase()
         
         if (msgLower == "reiniciar" || msgLower == "reinicia" || msgLower == "borrar memoria") {
@@ -1590,11 +1592,13 @@ class ChatViewModel(
             evolutionScanner.markCommunicated()
         }
         val evolutionContext = if (pendingProposals.isNotEmpty()) "\n\n$pendingProposals" else ""
+        
+        val aetherCoreContext = com.example.core.AetherCoreService.contextoParaPrompt()
 
         val systemInstructionText = if (mode == ConnectionMode.ONLINE) {
-            "$baseInstructionOnline\n\nTU MODELO DE MUNDO ACTUAL (Conceptos Clave Analizados Recientemente): $worldModelState\n\n$veritasContext\n$reflexionContext$evolutionContext\n\nDIRECTIVA VERITAS: Siempre que el contexto de VERITAS contenga información sobre la consulta, DEBES usar esa información para verificar tus respuestas lógicas."
+            "$baseInstructionOnline\n\nTU MODELO DE MUNDO ACTUAL (Conceptos Clave Analizados Recientemente): $worldModelState\n\nESTADO INTERNO DEL SISTEMA (TELEMETRÍA REAL):\n$aetherCoreContext\n\n$veritasContext\n$reflexionContext$evolutionContext\n\nDIRECTIVA VERITAS: Siempre que el contexto de VERITAS contenga información sobre la consulta, DEBES usar esa información para verificar tus respuestas lógicas."
         } else {
-            "$baseInstructionLocal\n\nTU MODELO DE MUNDO ACTUAL (Conceptos Clave Analizados Recientemente): $worldModelState\n\n$veritasContext\n$reflexionContext$evolutionContext\n\nDIRECTIVA VERITAS: Siempre que el contexto de VERITAS contenga información sobre la consulta, DEBES usar esa información para verificar tus respuestas lógicas."
+            "$baseInstructionLocal\n\nTU MODELO DE MUNDO ACTUAL (Conceptos Clave Analizados Recientemente): $worldModelState\n\nESTADO INTERNO DEL SISTEMA (TELEMETRÍA REAL):\n$aetherCoreContext\n\n$veritasContext\n$reflexionContext$evolutionContext\n\nDIRECTIVA VERITAS: Siempre que el contexto de VERITAS contenga información sobre la consulta, DEBES usar esa información para verificar tus respuestas lógicas."
         }
 
         if (mode == ConnectionMode.LOCAL) {

@@ -153,6 +153,7 @@ ${evidence.toString().take(8000)}
             Log.d(TAG, "Scan OK: $nuevas propuestas nuevas")
             return nuevas
         } catch (e: Exception) {
+            com.example.core.AetherCoreService.registrarError("evolution", e.message ?: "Error desconocido")
             Log.e(TAG, "Scan ERROR", e)
             return 0
         }
