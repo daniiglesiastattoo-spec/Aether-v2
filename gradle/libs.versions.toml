@@ -1,4 +1,5 @@
 [versions]
+work = "2.9.0"
 agp = "9.1.1"
 coreKtx = "1.18.0"
 junit = "4.13.2"
@@ -40,6 +41,7 @@ firebaseBom = "34.12.0"
 secretsGradlePlugin = "2.0.1"
 
 [libraries]
+androidx-work = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

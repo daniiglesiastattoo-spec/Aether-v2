@@ -16,6 +16,10 @@ import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
+import androidx.work.ExistingPeriodicWorkPolicy
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -236,6 +240,15 @@ class AetherCoreService : Service() {
         crearCanalNotificacion()
         startForeground(NOTIF_ID, construirNotificacion())
         iniciarLatido()
+        // Programar actualizacion automatica semanal
+        val updateRequest = PeriodicWorkRequestBuilder<UpdateWorker>(7, TimeUnit.DAYS)
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "WeeklyUpdate",
+            ExistingPeriodicWorkPolicy.KEEP,
+            updateRequest
+        )
+
         Log.i("AetherCore", "Servicio arrancado. Estado restaurado: ${estado.focoActual}")
     }
 

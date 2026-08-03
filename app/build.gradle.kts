@@ -14,8 +14,8 @@ android {
     applicationId = "com.daniiglesias.aether.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 140
-    versionName = "140.0"
+    versionCode = 141
+    versionName = "141.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -91,6 +91,7 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.work)
   implementation("com.google.mediapipe:tasks-genai:0.10.14")
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
