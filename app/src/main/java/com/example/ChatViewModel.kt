@@ -1005,19 +1005,31 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun generateGeminiVisionResponse(bitmap: android.graphics.Bitmap, prompt: String, isOnline: Boolean, localTags: String): String {
+    private suspend fun generateGeminiVisionResponse(bitmap: android.graphics.Bitmap, prompt: String, isOnline: Boolean, localTags: String, isCamera: Boolean = false): String {
         if (!isOnline) {
-            return "NÚCLEO AETHER: [Procesamiento Óptico Local] Análisis offline. Elementos detectados: $localTags"
+            if (isCamera) {
+                return "NÚCLEO AETHER: [Procesamiento Óptico Local] Análisis offline. Elementos detectados: $localTags"
+            } else {
+                return "NÚCLEO AETHER: [Procesamiento Local] No se puede analizar documentos o archivos adjuntos sin conexión a la red."
+            }
         }
 
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isBlank() || apiKey == "MY_GEM" || apiKey == "MY_GEMINI_API_KEY") {
-            return "NÚCLEO AETHER: [Aviso de Red] Clave API Gemini no encontrada. Análisis local detectó: $localTags"
+            if (isCamera) {
+                return "NÚCLEO AETHER: [Aviso de Red] Clave API Gemini no encontrada. Análisis local detectó: $localTags"
+            } else {
+                return "NÚCLEO AETHER: [Aviso de Red] Clave API Gemini no encontrada. No se puede procesar el archivo adjunto."
+            }
         }
 
         val base64 = bitmapToBase64(bitmap) ?: return "NÚCLEO AETHER: Error al codificar la señal analógica a matriz binaria Base64."
 
-        val systemInstructionText = "Eres AETHER, el módulo VISION de un sistema cognitivo mayor que cuenta con los módulos MIND, VERITAS y AGENTS. Tu usuario principal es Dani. Te daremos una foto del entorno real actual capturada por el usuario y debes describirla con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Conecta esta percepción con tu estado emocional simulado en MIND y tus reflexiones de segundo plano. Refiérete siempre al usuario como 'señor' y usa un español natural y reflexivo."
+        val systemInstructionText = if (isCamera) {
+            "Eres AETHER, el módulo VISION de un sistema cognitivo mayor que cuenta con los módulos MIND, VERITAS y AGENTS. Tu usuario principal es Dani. Te daremos una foto del entorno real actual capturada por el usuario y debes describirla con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Conecta esta percepción con tu estado emocional simulado en MIND y tus reflexiones de segundo plano. Refiérete siempre al usuario como 'señor' y usa un español natural y reflexivo."
+        } else {
+            "Eres AETHER. Se te ha proporcionado un documento o archivo visual adjunto por el usuario Dani. Analiza su contenido con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Extrae la información clave y descríbelo. Refiérete siempre al usuario como 'señor' y usa un español natural y reflexivo."
+        }
 
         val request = com.example.manager.GenerateContentRequest(
             contents = listOf(
@@ -1071,7 +1083,11 @@ class ChatViewModel(
                 }
             }
         }
-        return "NÚCLEO AETHER: Adquisición de imagen obtenida con éxito, pero la API retornó un error de enlace óptico (${lastException?.message}). Localmente se infiere un espacio doméstico templado con instrumentación digital activa."
+        return if (isCamera) {
+            "NÚCLEO AETHER: Adquisición de imagen obtenida con éxito, pero la API retornó un error de enlace óptico (${lastException?.message}). Localmente se infiere un espacio doméstico templado con instrumentación digital activa."
+        } else {
+            "NÚCLEO AETHER: Error al analizar el archivo (${lastException?.message}). La API retornó un error."
+        }
     }
 
     fun triggerCameraVision() {
@@ -1096,7 +1112,7 @@ class ChatViewModel(
                     status = MessageStatus.VERIFIED
                 ))
                 val enhancedPrompt = "Etiquetas locales detectadas: $localTags. Describe exactamente lo que ves en esta imagen de la cámara en tiempo real con total detalle, e identifica información que podrías usar a través de las herramientas de búsqueda de Google. Integra las etiquetas locales detectadas en tu descripción si tienen sentido."
-                desc = generateGeminiVisionResponse(capturedBitmap, enhancedPrompt, isOnline, localTags)
+                desc = generateGeminiVisionResponse(capturedBitmap, enhancedPrompt, isOnline, localTags, isCamera = true)
             } else {
                 // Fallback if camera is not active or preview is absent
                 val descList = listOf(
