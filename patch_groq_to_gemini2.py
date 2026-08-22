@@ -1,29 +1,33 @@
-import re
+import os
 
-with open("app/src/main/java/com/example/ChatViewModel.kt", "r") as f:
-    content = f.read()
+def replace_in_file(filepath, old, new):
+    with open(filepath, 'r') as f:
+        content = f.read()
+    if old in content:
+        content = content.replace(old, new)
+        with open(filepath, 'w') as f:
+            f.write(content)
+        print(f"Patched {filepath}")
+    else:
+        print(f"String not found in {filepath}: {old[:50]}...")
 
-# Replace BuildConfig.GROQ_API_KEY
-content = content.replace('BuildConfig.GROQ_API_KEY', 'BuildConfig.GEMINI_API_KEY')
-content = content.replace('"MY_GROQ_API_KEY"', '"MY_GEMINI_API_KEY"')
-
-# Replace the first block (file summarization)
-old_block1 = """                                val groqMessages = listOf(
+# ChatViewModel.kt changes
+replace_in_file("app/src/main/java/com/example/ChatViewModel.kt", 
+    'groqApiKey == "MY_GROQ_API_KEY"', 
+    'groqApiKey == "MY_GEMINI_API_KEY"')
+    
+replace_in_file("app/src/main/java/com/example/ChatViewModel.kt",
+"""                                val groqMessages = listOf(
                                     com.example.manager.GroqMessage(role = "system", content = "Eres AETHER. Resume el contenido del archivo proporcionado."),
                                     com.example.manager.GroqMessage(role = "user", content = summaryPrompt)
                                 )
                                 val req = com.example.manager.GroqRequest(messages = groqMessages)
                                 val resp = com.example.manager.GroqRetrofitClient.service.generateContent("Bearer $groqApiKey", req)
-                                resp.choices.firstOrNull()?.message?.content"""
-
-new_block1 = """                                val req = com.example.manager.GenerateContentRequest(
+                                val summary = resp.choices.firstOrNull()?.message?.content ?: "Resumen no disponible.\"""",
+"""                                val req = com.example.manager.GenerateContentRequest(
                                     systemInstruction = com.example.manager.Content(parts = listOf(com.example.manager.Part(text = "Eres AETHER. Resume el contenido del archivo proporcionado."))),
                                     contents = listOf(com.example.manager.Content(role = "user", parts = listOf(com.example.manager.Part(text = summaryPrompt))))
                                 )
                                 val resp = com.example.manager.RetrofitClient.service.generateContent(groqApiKey, req)
-                                resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text"""
-content = content.replace(old_block1, new_block1)
-
-with open("app/src/main/java/com/example/ChatViewModel.kt", "w") as f:
-    f.write(content)
+                                val summary = resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "Resumen no disponible.\"""")
 

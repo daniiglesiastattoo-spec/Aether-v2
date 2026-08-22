@@ -74,7 +74,7 @@ class EvolutionScanner(private val context: Context) {
 
     private fun buildPrompt(evidence: JSONObject): String {
         return """Eres el módulo de auto-análisis estructural de AETHER, un asistente
-IA que corre en Android (4-6GB RAM), con routing híbrido local/Groq, memoria SQLite y ciclos de reflexión.
+IA que corre en Android (4-6GB RAM), con routing híbrido local/Gemini, memoria SQLite y ciclos de reflexión.
 
 Analiza la EVIDENCIA y detecta como máximo $maxProposals problemas
 ESTRUCTURALES reales con propuesta de mejora. Reglas estrictas:
@@ -94,21 +94,18 @@ ${evidence.toString().take(8000)}
 
     suspend fun runScan(): Int {
         try {
-            val apiKey = com.example.BuildConfig.GROQ_API_KEY
-            if (apiKey.isBlank() || apiKey == "YOUR_GROQ_API_KEY") return 0
+            val apiKey = com.example.BuildConfig.GEMINI_API_KEY
+            if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") return 0
 
             val evidence = gatherEvidence()
             val prompt = buildPrompt(evidence)
 
-            val req = GroqRequest(
-                model = "llama-3.3-70b-versatile",
-                messages = listOf(
-                    GroqMessage(role = "user", content = prompt)
-                ),
-                temperature = 0.3
+            val req = GenerateContentRequest(
+                contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
+                generationConfig = GenerationConfig(temperature = 0.3)
             )
-            val response = GroqRetrofitClient.service.generateContent("Bearer $apiKey", req)
-            val jsonText = response.choices.firstOrNull()?.message?.content?.replace(Regex("```(json)?"), "")?.trim() ?: return 0
+            val response = RetrofitClient.service.generateContent(apiKey, req)
+            val jsonText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text?.replace(Regex("```(json)?"), "")?.trim() ?: return 0
             
             val startIdx = jsonText.indexOf('{')
             val endIdx = jsonText.lastIndexOf('}')

@@ -590,7 +590,7 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                                 viewModel.toggleConnectionMode()
                                 Toast.makeText(
                                     context,
-                                    "Conmutado a: ${if (connectionMode == ConnectionMode.LOCAL) "Groq Online" else "Local Native"}",
+                                    "Conmutado a: ${if (connectionMode == ConnectionMode.LOCAL) "Gemini Online" else "Local Native"}",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             },

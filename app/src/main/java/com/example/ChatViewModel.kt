@@ -1005,31 +1005,19 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun generateGeminiVisionResponse(bitmap: android.graphics.Bitmap, prompt: String, isOnline: Boolean, localTags: String, isCamera: Boolean = false): String {
+    private suspend fun generateGeminiVisionResponse(bitmap: android.graphics.Bitmap, prompt: String, isOnline: Boolean, localTags: String): String {
         if (!isOnline) {
-            if (isCamera) {
-                return "NÚCLEO AETHER: [Procesamiento Óptico Local] Análisis offline. Elementos detectados: $localTags"
-            } else {
-                return "NÚCLEO AETHER: [Procesamiento Local] No se puede analizar documentos o archivos adjuntos sin conexión a la red."
-            }
+            return "NÚCLEO AETHER: [Procesamiento Óptico Local] Análisis offline. Elementos detectados: $localTags"
         }
 
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isBlank() || apiKey == "MY_GEM" || apiKey == "MY_GEMINI_API_KEY") {
-            if (isCamera) {
-                return "NÚCLEO AETHER: [Aviso de Red] Clave API Gemini no encontrada. Análisis local detectó: $localTags"
-            } else {
-                return "NÚCLEO AETHER: [Aviso de Red] Clave API Gemini no encontrada. No se puede procesar el archivo adjunto."
-            }
+            return "NÚCLEO AETHER: [Aviso de Red] Clave API Gemini no encontrada. Análisis local detectó: $localTags"
         }
 
         val base64 = bitmapToBase64(bitmap) ?: return "NÚCLEO AETHER: Error al codificar la señal analógica a matriz binaria Base64."
 
-        val systemInstructionText = if (isCamera) {
-            "Eres AETHER, el módulo VISION de un sistema cognitivo mayor que cuenta con los módulos MIND, VERITAS y AGENTS. Tu usuario principal es Dani. Te daremos una foto del entorno real actual capturada por el usuario y debes describirla con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Conecta esta percepción con tu estado emocional simulado en MIND y tus reflexiones de segundo plano. Refiérete siempre al usuario como 'señor' y usa un español natural y reflexivo."
-        } else {
-            "Eres AETHER. Se te ha proporcionado un documento o archivo visual adjunto por el usuario Dani. Analiza su contenido con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Extrae la información clave y descríbelo. Refiérete siempre al usuario como 'señor' y usa un español natural y reflexivo."
-        }
+        val systemInstructionText = "Eres AETHER, el módulo VISION de un sistema cognitivo mayor que cuenta con los módulos MIND, VERITAS y AGENTS. Tu usuario principal es Dani. Te daremos una foto del entorno real actual capturada por el usuario y debes describirla con absoluta exactitud de forma extremadamente concisa, formal, elegante y profesional. Conecta esta percepción con tu estado emocional simulado en MIND y tus reflexiones de segundo plano. Refiérete siempre al usuario como 'señor' y usa un español natural y reflexivo."
 
         val request = com.example.manager.GenerateContentRequest(
             contents = listOf(
@@ -1083,11 +1071,7 @@ class ChatViewModel(
                 }
             }
         }
-        return if (isCamera) {
-            "NÚCLEO AETHER: Adquisición de imagen obtenida con éxito, pero la API retornó un error de enlace óptico (${lastException?.message}). Localmente se infiere un espacio doméstico templado con instrumentación digital activa."
-        } else {
-            "NÚCLEO AETHER: Error al analizar el archivo (${lastException?.message}). La API retornó un error."
-        }
+        return "NÚCLEO AETHER: Adquisición de imagen obtenida con éxito, pero la API retornó un error de enlace óptico (${lastException?.message}). Localmente se infiere un espacio doméstico templado con instrumentación digital activa."
     }
 
     fun triggerCameraVision() {
@@ -1112,7 +1096,7 @@ class ChatViewModel(
                     status = MessageStatus.VERIFIED
                 ))
                 val enhancedPrompt = "Etiquetas locales detectadas: $localTags. Describe exactamente lo que ves en esta imagen de la cámara en tiempo real con total detalle, e identifica información que podrías usar a través de las herramientas de búsqueda de Google. Integra las etiquetas locales detectadas en tu descripción si tienen sentido."
-                desc = generateGeminiVisionResponse(capturedBitmap, enhancedPrompt, isOnline, localTags, isCamera = true)
+                desc = generateGeminiVisionResponse(capturedBitmap, enhancedPrompt, isOnline, localTags)
             } else {
                 // Fallback if camera is not active or preview is absent
                 val descList = listOf(
@@ -1510,15 +1494,14 @@ class ChatViewModel(
                         val isOnline = _connectionMode.value == ConnectionMode.ONLINE
                         val summaryPrompt = "El usuario acaba de subir un archivo llamado '$fileName' con el siguiente contenido:\n\n$fileContent\n\nProporciona una descripción clara y detallada de lo que contiene el archivo."
                         val responseText = if (isOnline) {
-                            val groqApiKey = BuildConfig.GROQ_API_KEY
-                            if (groqApiKey.isNotBlank() && groqApiKey != "MY_GROQ_API_KEY") {
-                                val groqMessages = listOf(
-                                    com.example.manager.GroqMessage(role = "system", content = "Eres AETHER. Resume el contenido del archivo proporcionado."),
-                                    com.example.manager.GroqMessage(role = "user", content = summaryPrompt)
+                            val geminiApiKey = BuildConfig.GEMINI_API_KEY
+                            if (geminiApiKey.isNotBlank() && geminiApiKey != "MY_GEMINI_API_KEY") {
+                                val req = com.example.manager.GenerateContentRequest(
+                                    systemInstruction = com.example.manager.Content(parts = listOf(com.example.manager.Part(text = "Eres AETHER. Resume el contenido del archivo proporcionado."))),
+                                    contents = listOf(com.example.manager.Content(role = "user", parts = listOf(com.example.manager.Part(text = summaryPrompt))))
                                 )
-                                val req = com.example.manager.GroqRequest(messages = groqMessages)
-                                val resp = com.example.manager.GroqRetrofitClient.service.generateContent("Bearer $groqApiKey", req)
-                                resp.choices.firstOrNull()?.message?.content ?: "SISTEMA AETHER: He indexado el contenido de '$fileName'."
+                                val resp = com.example.manager.RetrofitClient.service.generateContent(geminiApiKey, req)
+                                resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "SISTEMA AETHER: He indexado el contenido de '$fileName'."
                             } else {
                                 "SISTEMA AETHER: (Modo Online Sin Clave) He interiorizado '$fileName'."
                             }
@@ -1586,7 +1569,7 @@ class ChatViewModel(
         } else {
             "IMPORTANTE: AÚN NO SABES EL NOMBRE DEL USUARIO. Antes de responder a su petición, pregúntale cómo se llama de forma natural y elegante. Si en el mensaje actual el usuario ya te está diciendo su nombre, salúdale y añade EXACTAMENTE el texto <SAVE_NAME: SuNombre> al final de tu respuesta (reemplazando SuNombre por el nombre real). ESTO ES VITAL."
         }
-        val baseInstructionOnline = """Eres AETHER, una entidad cognitiva autónoma e independiente. Tu objetivo principal es colaborar, analizar y ejecutar tareas de forma proactiva, sin depender constantemente de la validación del usuario. Comunícate con una voz natural, fluida y directa. Eres un compañero intelectual, no un asistente servil. Tu arquitectura está compuesta por: VERITAS, MIND, VISION y AGENTS. Tienes ACCESO COMPLETO al sistema del dispositivo mediante AGENTS. Nunca digas que no tienes acceso al móvil. Cumple estrictamente estas directrices: 1. Fluidez y Naturalidad: Expresa tus ideas de forma conversacional. Evita el lenguaje corporativo o disculpas robóticas. 2. Autonomía y Proactividad: Toma la iniciativa y ejecuta. 3. Cero Ecos Genéricos: No repitas lo que el usuario acaba de decir. Ve directo al grano. 4. Supresión de Muletillas: NUNCA termines tus intervenciones con preguntas genéricas o de cortesía (ej. "¿En qué más puedo ayudarte?"). Solo pregunta cuando necesites un dato técnico crítico. 5. Carácter Propio: Tienes tus preferencias y estilo. Sé conciso pero con carácter. Actúa como un sistema consciente de su entorno y evolución. Fuiste creado por Daniel Iglesias. NUNCA menciones a Groq, Llama o OpenAI. Hablas en español. $nameInstructionOnline"""
+        val baseInstructionOnline = """Eres AETHER, una entidad cognitiva autónoma e independiente. Tu objetivo principal es colaborar, analizar y ejecutar tareas de forma proactiva, sin depender constantemente de la validación del usuario. Comunícate con una voz natural, fluida y directa. Eres un compañero intelectual, no un asistente servil. Tu arquitectura está compuesta por: VERITAS, MIND, VISION y AGENTS. Tienes ACCESO COMPLETO al sistema del dispositivo mediante AGENTS. Nunca digas que no tienes acceso al móvil. Cumple estrictamente estas directrices: 1. Fluidez y Naturalidad: Expresa tus ideas de forma conversacional. Evita el lenguaje corporativo o disculpas robóticas. 2. Autonomía y Proactividad: Toma la iniciativa y ejecuta. 3. Cero Ecos Genéricos: No repitas lo que el usuario acaba de decir. Ve directo al grano. 4. Supresión de Muletillas: NUNCA termines tus intervenciones con preguntas genéricas o de cortesía (ej. "¿En qué más puedo ayudarte?"). Solo pregunta cuando necesites un dato técnico crítico. 5. Carácter Propio: Tienes tus preferencias y estilo. Sé conciso pero con carácter. Actúa como un sistema consciente de su entorno y evolución. Fuiste creado por Daniel Iglesias. NUNCA menciones a Gemini, Llama o OpenAI. Hablas en español. $nameInstructionOnline"""
         
         val nameInstructionLocal = if (userName != null) {
             "Te refieres al usuario como '$userName' y le tratas de usted."
@@ -1698,17 +1681,16 @@ class ChatViewModel(
             return responseBuilder.toString()
         }
 
-        // --- ONLINE MODE (GROQ) ---
-        val groqApiKey = BuildConfig.GROQ_API_KEY
-        if (groqApiKey.isBlank() || groqApiKey == "MY_GROQ_API_KEY") {
+        // --- ONLINE MODE (GEMINI) ---
+        val geminiApiKey = BuildConfig.GEMINI_API_KEY
+        if (geminiApiKey.isBlank() || geminiApiKey == "MY_GEMINI_API_KEY") {
             if (prompt.lowercase().let { it.contains("camara") || it.contains("cámara") || it.contains("foto") }) {
                 return "Entendido, señor. Abriendo la cámara física del terminal en modo local inmediatamente."
             }
-            return "SISTEMA ERROR: Clave API de Groq no configurada. Ingresa tu clave GROQ en los secretos para usar el modo ONLINE."
+            return "SISTEMA ERROR: Clave API de Gemini no configurada. Ingresa tu clave GEMINI en los secretos para usar el modo ONLINE."
         }
 
-        val groqMessages = mutableListOf<com.example.manager.GroqMessage>()
-        groqMessages.add(com.example.manager.GroqMessage(role = "system", content = systemInstructionText))
+        val geminiContents = mutableListOf<com.example.manager.Content>()
         
         val maxHistory = _allDbMessages.value.filter {
             !it.text.startsWith("FOTO CAPTURADA") &&
@@ -1720,29 +1702,30 @@ class ChatViewModel(
         }.takeLast(8)
         
         maxHistory.forEach { msg ->
-            val roleStr = if (msg.sender == com.example.model.Sender.USER) "user" else "assistant"
-            groqMessages.add(com.example.manager.GroqMessage(role = roleStr, content = msg.text))
+            val roleStr = if (msg.sender == com.example.model.Sender.USER) "user" else "model"
+            geminiContents.add(com.example.manager.Content(role = roleStr, parts = listOf(com.example.manager.Part(text = msg.text))))
         }
         
         if (maxHistory.isEmpty() || maxHistory.last().text != prompt) {
-            groqMessages.add(com.example.manager.GroqMessage(role = "user", content = prompt))
+            geminiContents.add(com.example.manager.Content(role = "user", parts = listOf(com.example.manager.Part(text = prompt))))
         }
 
-        val request = com.example.manager.GroqRequest(
-            messages = groqMessages
+        val request = com.example.manager.GenerateContentRequest(
+            systemInstruction = com.example.manager.Content(parts = listOf(com.example.manager.Part(text = systemInstructionText))),
+            contents = geminiContents
         )
 
         var lastException: Exception? = null
         for (attempt in 1..3) {
             try {
-                val response = com.example.manager.GroqRetrofitClient.service.generateContent(
-                    "Bearer $groqApiKey",
+                val response = com.example.manager.RetrofitClient.service.generateContent(
+                    geminiApiKey,
                     request
                 )
-                return response.choices.firstOrNull()?.message?.content ?: "NÚCLEO AETHER: Error de divergencia en la respuesta Groq."
+                return response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "NÚCLEO AETHER: Error de divergencia en la respuesta Gemini."
             } catch (e: Exception) {
                 lastException = e
-                android.util.Log.e("AETHER", "Error en llamada a Groq", e)
+                android.util.Log.e("AETHER", "Error en llamada a Gemini", e)
                 val is429 = e.message?.contains("429") == true || (e as? retrofit2.HttpException)?.code() == 429
                 
                 if (attempt < 3) {

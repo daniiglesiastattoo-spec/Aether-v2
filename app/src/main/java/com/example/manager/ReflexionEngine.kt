@@ -65,19 +65,16 @@ Responde SOLO con un objeto JSON, sin markdown ni texto extra:
 }"""
 
         try {
-            val apiKey = com.example.BuildConfig.GROQ_API_KEY
-            if (apiKey.isBlank() || apiKey == "YOUR_GROQ_API_KEY") return null
+            val apiKey = com.example.BuildConfig.GEMINI_API_KEY
+            if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") return null
 
-            val req = GroqRequest(
-                model = "llama-3.3-70b-versatile",
-                messages = listOf(
-                    GroqMessage(role = "system", content = "Eres el motor de reflexión metacognitiva interno de AETHER."),
-                    GroqMessage(role = "user", content = prompt)
-                ),
-                temperature = 0.3
+            val req = GenerateContentRequest(
+                systemInstruction = Content(parts = listOf(Part(text = "Eres el motor de reflexión metacognitiva interno de AETHER."))),
+                contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
+                generationConfig = GenerationConfig(temperature = 0.3)
             )
-            val response = GroqRetrofitClient.service.generateContent("Bearer $apiKey", req)
-            val jsonText = response.choices.firstOrNull()?.message?.content?.replace(Regex("```(json)?"), "")?.trim() ?: return null
+            val response = RetrofitClient.service.generateContent(apiKey, req)
+            val jsonText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text?.replace(Regex("```(json)?"), "")?.trim() ?: return null
             val startIdx = jsonText.indexOf('{')
             val endIdx = jsonText.lastIndexOf('}')
             
