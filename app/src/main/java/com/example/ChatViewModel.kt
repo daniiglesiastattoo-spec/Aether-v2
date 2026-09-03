@@ -1062,9 +1062,13 @@ class ChatViewModel(
                 lastException = e
                 android.util.Log.e("AETHER_VISION", "Error en llamada a Gemini Vision", e)
                 val is503 = e.message?.contains("503") == true || (e as? retrofit2.HttpException)?.code() == 503
+                val is429 = e.message?.contains("429") == true || (e as? retrofit2.HttpException)?.code() == 429
                 if (attempt < 2) {
                     kotlinx.coroutines.delay(1000L * attempt)
                     continue
+                }
+                if (is429) {
+                    return "NÚCLEO AETHER: [ALERTA HTTP 429] Límite visual online alcanzado. Visión conmutada a offline. Análisis local estimativo: $localTags"
                 }
                 if (is503) {
                     return "NÚCLEO AETHER: Conexión visual caída por alta demanda en el nodo (Servicio 503). Por favor reintenta en breve."
@@ -1496,12 +1500,16 @@ class ChatViewModel(
                         val responseText = if (isOnline) {
                             val geminiApiKey = BuildConfig.GEMINI_API_KEY
                             if (geminiApiKey.isNotBlank() && geminiApiKey != "MY_GEMINI_API_KEY") {
-                                val req = com.example.manager.GenerateContentRequest(
-                                    systemInstruction = com.example.manager.Content(parts = listOf(com.example.manager.Part(text = "Eres AETHER. Resume el contenido del archivo proporcionado."))),
-                                    contents = listOf(com.example.manager.Content(role = "user", parts = listOf(com.example.manager.Part(text = summaryPrompt))))
-                                )
-                                val resp = com.example.manager.RetrofitClient.service.generateContent(geminiApiKey, req)
-                                resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "SISTEMA AETHER: He indexado el contenido de '$fileName'."
+                                try {
+                                    val req = com.example.manager.GenerateContentRequest(
+                                        systemInstruction = com.example.manager.Content(parts = listOf(com.example.manager.Part(text = "Eres AETHER. Resume el contenido del archivo proporcionado."))),
+                                        contents = listOf(com.example.manager.Content(role = "user", parts = listOf(com.example.manager.Part(text = summaryPrompt))))
+                                    )
+                                    val resp = com.example.manager.RetrofitClient.service.generateContent(geminiApiKey, req)
+                                    resp.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "SISTEMA AETHER: He indexado el contenido de '$fileName'."
+                                } catch (e: Exception) {
+                                    "SISTEMA AETHER: He interiorizado el documento '$fileName' en modo local. (No se pudo procesar online: ${e.message})"
+                                }
                             } else {
                                 "SISTEMA AETHER: (Modo Online Sin Clave) He interiorizado '$fileName'."
                             }
@@ -1734,7 +1742,8 @@ class ChatViewModel(
                 }
                 
                 if (is429) {
-                    return "NÚCLEO AETHER: Límite de procesamiento cognitivo en cluster online alcanzado (HTTP 429). Por favor, aguarda."
+                    val localFallback = generateSciFiResponse(prompt, ConnectionMode.LOCAL)
+                    return "NÚCLEO AETHER: [ALERTA HTTP 429] Red neuronal online sobrecargada. Ejecutando salto de emergencia a proceso heurístico LOCAL:\n\n$localFallback"
                 }
             }
         }

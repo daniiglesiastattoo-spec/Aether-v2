@@ -14,8 +14,8 @@ android {
     applicationId = "com.daniiglesias.aether.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 147
-    versionName = "147.0"
+    versionCode = 150
+    versionName = "150.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
