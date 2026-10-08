@@ -14,8 +14,8 @@ android {
     applicationId = "com.daniiglesias.aether.app"
     minSdk = 26
     targetSdk = 36
-    versionCode = 150
-    versionName = "150.0"
+    versionCode = 151
+    versionName = "151.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -50,6 +50,10 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
+  }
+  androidResources {
+    noCompress += "tflite"
+    noCompress += "task"
   }
   buildFeatures {
     compose = true
@@ -92,7 +96,7 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.work)
-  implementation("com.google.mediapipe:tasks-genai:0.10.14")
+  implementation("com.google.mediapipe:tasks-genai:0.10.27")
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

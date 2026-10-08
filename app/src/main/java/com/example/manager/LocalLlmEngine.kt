@@ -1,145 +1,77 @@
 package com.example.manager
 
-import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
-import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 
 object LocalLlmEngine {
+    enum class State {
+        NOT_DOWNLOADED, DOWNLOADING, READY, LOADED, FAILED
+    }
 
-    private const val TAG = "LocalLlmEngine"
+    val state = MutableStateFlow(State.NOT_DOWNLOADED)
     private var llmInference: LlmInference? = null
-    private const val MODEL_PATH_RELATIVE = "models/gemma3-1b-it.task"
-
-    fun getModelFile(context: Context): File {
-        return File(context.filesDir, MODEL_PATH_RELATIVE)
+    
+    fun checkModelState(context: Context) {
+        val modelFile = File(context.filesDir, "models/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task")
+        if (modelFile.exists()) {
+            state.value = State.READY
+        } else {
+            state.value = State.NOT_DOWNLOADED
+        }
     }
 
-    fun isModelAvailable(context: Context): Boolean {
-        val file = getModelFile(context)
-        return file.exists() && file.length() > 100 * 1024 * 1024
-    }
-
-    private var currentOnPartial: ((String) -> Unit)? = null
-    private var currentOnDone: (() -> Unit)? = null
-
-    private fun getMemoryInfo(context: Context): String {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memoryInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memoryInfo)
-        val availMb = memoryInfo.availMem / (1024 * 1024)
-        val totalMb = memoryInfo.totalMem / (1024 * 1024)
-        return "RAM: ${availMb}MB de ${totalMb}MB"
-    }
-
-    suspend fun initializeIfNeeded(context: Context) {
-        if (llmInference != null) return
-
-        val modelFile = getModelFile(context)
+    fun load(context: Context): Boolean {
+        if (state.value == State.LOADED) return true
+        val modelFile = File(context.filesDir, "models/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task")
         if (!modelFile.exists()) {
-            throw IllegalStateException("Model file not found at ${modelFile.absolutePath}")
+            state.value = State.NOT_DOWNLOADED
+            return false
         }
-
-        withContext(Dispatchers.IO) {
-            val memInfo = getMemoryInfo(context)
-            Log.i(TAG, "Initializing LLM. $memInfo")
-            try {
-                // Initialize with GPU first
-                val optionsBuilderGPU = LlmInference.LlmInferenceOptions.builder()
-                    .setModelPath(modelFile.absolutePath)
-                    .setMaxTokens(512)
-                    .setTopK(40)
-                    .setTemperature(0.8f)
-                    .setResultListener { partialResult, done ->
-                        if (partialResult != null) {
-                            currentOnPartial?.invoke(partialResult)
-                        }
-                        if (done) {
-                            currentOnDone?.invoke()
-                        }
-                    }
+        
+        return try {
+            val options = LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(modelFile.absolutePath)
+                .setMaxTokens(512)
                 
-                try {
-                    val delegateMethod = optionsBuilderGPU.javaClass.getMethod("setDelegate", Delegate::class.java)
-                    delegateMethod.invoke(optionsBuilderGPU, Delegate.GPU)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "setDelegate(GPU) not found or failed, ignoring.")
-                }
                 
-                try {
-                    llmInference = LlmInference.createFromOptions(context, optionsBuilderGPU.build())
-                    Log.i(TAG, "Local LLM Initialized successfully with GPU")
-                } catch (eGPU: Throwable) {
-                    Log.w(TAG, "Failed GPU initialization. Trying CPU. $memInfo", eGPU)
-                    
-                    val optionsBuilderCPU = LlmInference.LlmInferenceOptions.builder()
-                        .setModelPath(modelFile.absolutePath)
-                        .setMaxTokens(512)
-                        .setTopK(40)
-                        .setTemperature(0.8f)
-                        .setResultListener { partialResult, done ->
-                            if (partialResult != null) {
-                                currentOnPartial?.invoke(partialResult)
-                            }
-                            if (done) {
-                                currentOnDone?.invoke()
-                            }
-                        }
-                        
-                    try {
-                        val delegateMethod = optionsBuilderCPU.javaClass.getMethod("setDelegate", Delegate::class.java)
-                        delegateMethod.invoke(optionsBuilderCPU, Delegate.CPU)
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "setDelegate(CPU) not found or failed, ignoring.")
-                    }
-                    
-                    try {
-                        llmInference = LlmInference.createFromOptions(context, optionsBuilderCPU.build())
-                        Log.i(TAG, "Local LLM Initialized successfully with CPU")
-                    } catch (eCPU: Throwable) {
-                        throw Exception("GPU fail: ${eGPU.message} | CPU fail: ${eCPU.message}")
-                    }
-                }
-            } catch (e: Throwable) {
-                Log.e(TAG, "Failed to initialize Local LLM", e)
-                throw Exception("Init Error (Memoria: ${getMemoryInfo(context)}): ${e.message}", e)
-            }
+                .build()
+                
+            llmInference = LlmInference.createFromOptions(context, options)
+            state.value = State.LOADED
+            true
+        } catch (e: OutOfMemoryError) {
+            Log.e("LocalLlmEngine", "OOM loading local model", e)
+            state.value = State.FAILED
+            false
+        } catch (e: Exception) {
+            Log.e("LocalLlmEngine", "Error loading local model", e)
+            state.value = State.FAILED
+            false
         }
     }
-
-    suspend fun generateStreaming(
-        context: Context,
-        prompt: String,
-        onPartial: (String) -> Unit,
-        onDone: () -> Unit
-    ) {
-        withContext(Dispatchers.IO) {
-            try {
-                initializeIfNeeded(context)
-                currentOnPartial = onPartial
-                currentOnDone = onDone
-
-                val engine = llmInference ?: throw IllegalStateException("LLM Engine not initialized")
-                
-                engine.generateResponseAsync(prompt)
-            } catch (e: Throwable) {
-                Log.e(TAG, "Error generating response", e)
-                throw Exception(e.message, e)
-            }
-        }
-    }
-
-    fun release() {
+    
+    fun unload() {
         try {
             llmInference?.close()
-        } catch (e: Throwable) {
-            Log.e(TAG, "Error releasing llmInference", e)
+        } catch (e: Exception) {
+            Log.e("LocalLlmEngine", "Error closing engine", e)
         }
         llmInference = null
-        Log.i(TAG, "Local LLM released")
+        if (state.value == State.LOADED || state.value == State.FAILED) {
+            state.value = State.READY
+        }
+    }
+    
+    fun generateResponse(prompt: String): Result<String> {
+        val engine = llmInference ?: return Result.failure(Exception("Engine not loaded"))
+        return try {
+            val result = engine.generateResponse(prompt)
+            Result.success(result)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }

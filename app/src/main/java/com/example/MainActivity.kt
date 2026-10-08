@@ -1,5 +1,13 @@
 package com.example
 
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import com.example.manager.ModelDownloadWorker
+import com.example.manager.LocalLlmEngine
+import com.example.manager.ModelDownloadState
+import androidx.work.NetworkType
+import androidx.work.Constraints
+
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -86,6 +94,14 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW || level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            com.example.manager.LocalLlmEngine.unload()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -165,6 +181,8 @@ fun AetherCameraPreview(
     useFrontCamera: Boolean = false
 ) {
     val context = LocalContext.current
+
+
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     val imageCapture = remember { ImageCapture.Builder().build() }
@@ -262,11 +280,16 @@ fun AELogoIcon(modifier: Modifier = Modifier) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AetherAppScreen(viewModel: ChatViewModel) {
+
+
+
+
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsStateWithLifecycle()
     val isLiveMode by viewModel.isLiveMode.collectAsStateWithLifecycle()
     val isAetherSpeaking by viewModel.isAetherSpeaking.collectAsStateWithLifecycle()
     val connectionMode by viewModel.connectionMode.collectAsStateWithLifecycle()
+    val activeEngine by com.example.manager.LlmRouter.activeEngine.collectAsStateWithLifecycle()
     val activeTab by viewModel.activeTab.collectAsStateWithLifecycle()
 
     var textInput by remember { mutableStateOf("") }
@@ -274,6 +297,16 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        LocalLlmEngine.checkModelState(context)
+        if (LocalLlmEngine.state.value == LocalLlmEngine.State.NOT_DOWNLOADED || LocalLlmEngine.state.value == LocalLlmEngine.State.FAILED) {
+            val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build()
+            val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>().setConstraints(constraints).build()
+            WorkManager.getInstance(context).enqueue(request)
+        }
+    }
+    val dlProgress by ModelDownloadState.progress.collectAsStateWithLifecycle()
+    val dlStatus by ModelDownloadState.status.collectAsStateWithLifecycle()
 
 
     val focusManager = LocalFocusManager.current
@@ -585,12 +618,27 @@ fun AetherAppScreen(viewModel: ChatViewModel) {
                         Spacer(modifier = Modifier.width(6.dp))
 
                         // Connection Mode Selector
+                        
+                        if (dlStatus == "DOWNLOADING") {
+                            Text(
+                                text = "DL: ${dlProgress.toInt()}%",
+                                color = StatusGreen,
+                                fontSize = 9.sp,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+                        }
+Text(
+                            text = activeEngine,
+                            color = AccentCyan,
+                            fontSize = 9.sp,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
                         IconButton(
                             onClick = {
                                 viewModel.toggleConnectionMode()
                                 Toast.makeText(
                                     context,
-                                    "Conmutado a: ${if (connectionMode == ConnectionMode.LOCAL) "Gemini Online" else "Local Native"}",
+                                    "Preferencia conmutada a: ${if (connectionMode == ConnectionMode.LOCAL) "ONLINE" else "LOCAL"}",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             },
@@ -2541,7 +2589,7 @@ fun SystemTabContent(viewModel: ChatViewModel) {
                     Text("${(progress * 100).toInt()}%", color = AccentCyan, fontSize = 12.sp, modifier = Modifier.align(Alignment.End))
                 } else if (isLocalModelAvailable) {
                     Text("Estado: Instalado y listo.", color = Color.Green, fontSize = 14.sp)
-                    val file = com.example.manager.LocalLlmEngine.getModelFile(viewModel.context)
+                    val file = java.io.File(androidx.compose.ui.platform.LocalContext.current.filesDir, "models/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task")
                     Text("Tamaño: ${file.length() / (1024 * 1024)} MB", color = Color.Gray, fontSize = 12.sp)
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(

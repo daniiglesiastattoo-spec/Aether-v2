@@ -1,0 +1,102 @@
+================================================================================
+Una cota de densidad fija la misma geometría de de Sitter en el núcleo de un agujero negro regular y en el universo primordial, en cualquier dimensión
+Autor: Daniel Iglesias López
+Investigador Independiente, Guardo, Palencia, España
+Contacto: daniiglesiastattoo@gmail.com
+Fecha / Versión: Septiembre de 2026 — versión 4.5
+================================================================================
+
+Abstract
+Sea L(F) un lagrangiano de electrodinámica no lineal acotado superiormente, con sup_F L = rho_max alcanzado a campo fuerte y F L_F -> 0 en ese límite. Se demuestra que sus dos soluciones canónicas —el agujero negro regular de monopolo magnético y el fondo FLRW con campo magnético estocástico— convergen a la misma geometría de de Sitter, de radio:
+    ell_D = sqrt( (D - 1)(D - 2) / (16 * pi * G * rho_max) )
+    ell_4 = sqrt( 3 / (8 * pi * G * rho_max) )
+de modo que la gravedad superficial del horizonte interior del agujero negro y el ritmo de Hubble primordial coinciden:
+    kappa_- = H_dS = 1 / ell_D.
+La identidad no depende de la forma funcional de L —se verifica para cinco lagrangianos sin relación entre sí— sino únicamente de la existencia de la cota, y vale en cualquier D >= 4. La versión 4.5 añade la forma cerrada de la desviación a masa finita, kappa_- * ell = [(D - 1) - (D - 3) x^2] / (2 x^3) con x = r_- / ell, que convierte en cuantitativa la salvedad asintótica de las versiones anteriores, y reagrupa como observación sin contenido independiente las cantidades K_max, T, A y S, que se siguen forzosamente de que el estado límite sea de Sitter.
+
+1. Planteamiento
+Los agujeros negros regulares con núcleo de de Sitter y las cosmologías no singulares generadas por electrodinámica no lineal (NED) son dos líneas de trabajo bien establecidas y habitualmente desconectadas. La primera sustituye la singularidad central por un núcleo de curvatura acotada; la segunda sustituye la singularidad inicial por una fase de curvatura acotada.
+Este trabajo señala que, cuando ambas se derivan del mismo lagrangiano NED acotado, las dos regiones reguladas no son análogas: convergen al mismo estado. Comparten radio de de Sitter y ritmo característico, y el valor común queda fijado por la cota y nada más.
+La razón estructural: El teorema no necesita que los exponentes del invariante electromagnético coincidan en las dos configuraciones —no lo hacen fuera de D = 4, pues la conservación del flujo magnético a través de S^(D-2) da F proporcional a r^(-2(D-2)) para el monopolo mientras que en FLRW F proporcional a a^(-4) en toda dimensión— sino sólo que ambas lleven F -> infinito cuando la longitud correspondiente tiende a cero. Eso ocurre para cualquier exponente positivo. Un lagrangiano acotado satura en ese límite, el estado saturado es en ambos casos un fluido de densidad constante rho_max con w = -1, y la geometría de un tal fluido es de Sitter con un radio que sólo puede depender de rho_max, G y la dimensión.
+
+2. Hipótesis y convenciones
+(H) L : (0, infinito) -> R es C^1, creciente, con:
+    lim_{F -> infinito} L(F) = rho_max < infinito,
+    lim_{F -> infinito} F L_F(F) = 0.
+La segunda condición exige que L alcance su cota suficientemente rápido; se cumple, por ejemplo, siempre que rho_max - L(F) = O(F^(-epsilon)) con epsilon > 0. No se impone ninguna otra restricción: en particular, no se supone límite de Maxwell a campo débil, aunque tampoco se excluye.
+Se usa F = (1/4) F_mu_nu F^mu_nu, de modo que un campo puramente magnético da F = B^2 / 2. Unidades c = hbar = 1, con G explícito. Se trabaja en D dimensiones espaciotemporales, D >= 4, y se denota por Omega_n = 2 * pi^((n+1)/2) / Gamma((n+1)/2) el área de S^n.
+
+3. Las dos soluciones
+3.1 Monopolo magnético estático
+La conservación del flujo a través de S^(D-2) da B = q / r^(D-2) y por tanto:
+    F(r) = q^2 / (2 * r^(2(D-2)))           (1)
+La NED magnética pura tiene T^t_t = T^r_r = -L, luego rho(r) = L(F(r)), y la métrica es ds^2 = -f dt^2 + f^(-1) dr^2 + r^2 dOmega^2_(D-2) con:
+    f(r) = 1 - (16 * pi * G * m(r)) / ((D - 2) * Omega_(D-2) * r^(D-3))
+    m(r) = integral_0^r Omega_(D-2) r'^(D-2) L(F(r')) dr'            (2)
+
+Lema 1 (Núcleo de de Sitter):
+Bajo (H), f(r) = 1 - r^2 / ell_D^2 + o(r^2) cuando r -> 0, con:
+    ell_D^2 = (D - 1)(D - 2) / (16 * pi * G * rho_max)               (3)
+Demostración: r -> 0 implica F -> infinito, pues el exponente 2(D - 2) es positivo para todo D >= 3; luego L -> rho_max por (H). Entonces m(r) = Omega_(D-2) * rho_max * r^(D-1) / (D - 1) + o(r^(D-1)) y, sustituyendo en (2), f = 1 - 16 * pi * G * rho_max * r^2 / [(D - 1)(D - 2)] + o(r^2).
+Si además existe un horizonte interior r_- situado en el núcleo, su gravedad superficial es kappa_- = |f'(r_-)| / 2 = r_- / ell_D^2, y f(r_-) = 0 da r_- -> ell_D, luego:
+    kappa_- -> 1 / ell_D                                              (4)
+
+3.2 Fondo FLRW con campo magnético estocástico
+Para un campo magnético estocástico promediado con <E> = 0, el tensor de energía-momento promediado es isótropo con:
+    rho = L(F),   p = -L(F) + (D / (D - 1)) * F * L_F                (5)
+y la conservación del flujo da B proporcional a a^(-2), es decir F proporcional a a^(-4), en toda dimensión.
+Lema 3 (Fase de de Sitter primordial):
+Bajo (H), a -> 0 implica w = p / rho -> -1 y H^2 -> 16 * pi * G * rho_max / [(D - 1)(D - 2)] = ell_D^(-2).
+
+4. Resultado
+Teorema 4 (Coincidencia):
+Bajo (H), y en cualquier dimensión D >= 4, las dos soluciones anteriores del mismo lagrangiano convergen a la misma geometría de de Sitter de radio ell_D dado por (3). En consecuencia:
+    kappa_- = H_dS = 1 / ell_D                                        (6)
+La cantidad no depende de la masa del agujero negro, de la carga magnética, del contenido cosmológico ni de la forma funcional de L: depende sólo de rho_max y de D.
+
+Observación 5 (Cantidades derivadas):
+Escalar de Kretschmann K = 2D(D - 1) / ell_D^4
+Temperatura de Gibbons-Hawking T = 1 / (2 * pi * ell_D)
+Área A = Omega_(D-2) * ell_D^(D-2)
+Entropía de Bekenstein-Hawking S = A / (4 * G).
+En D = 4 con rho_max = rho_P = c^5 / (hbar * G^2):
+    K = 512 * pi^2 / (3 * l_P^4)
+    T = sqrt(2 * pi) / (sqrt(3) * pi)
+    A = (3 / 2) * l_P^2
+    S = (3 / 8) * k_B
+
+Observación 6 (Valores en el caso planckiano, D = 4):
+    kappa_- = H_dS = sqrt(8 * pi / 3) * t_P^(-1) = 2.8944050182330706...
+    ell = sqrt(3 / (8 * pi)) * l_P = 0.3454941494713355...
+
+5. Desviación a masa finita, en forma cerrada (Versión 4.5)
+Para la métrica de Hayward en D dimensiones:
+    f(r) = 1 - (mu * r^2) / (r^(D-1) + mu * ell^2)                    (7)
+En cualquier horizonte: mu = r_h^(D-1) / (r_h^2 - ell^2), y:
+    f'(r_h) = ((D - 3) * r_h^2 - (D - 1) * ell^2) / r_h^3            (8)
+Proposición 7: Sea x = r_- / ell. Entonces:
+    kappa_- * ell = [ (D - 1) - (D - 3) * x^2 ] / (2 * x^3)           (9)
+y kappa_- * ell = 1 en x = 1 para todo D >= 4.
+Para D = 4: kappa_- * ell = (3 - x^2) / (2 * x^3).
+En mu / ell^(D-3):
+    10:      r_- / ell = 1.02670,      kappa_- * ell = 0.898994
+    10^2:    r_- / ell = 1.002516,     kappa_- * ell = 0.989991
+    10^4:    r_- / ell = 1.0000250,    kappa_- * ell = 0.9998999
+    10^8:    r_- / ell = 1.0000000,    kappa_- * ell = 0.99999999
+    10^30:   r_- / ell = 1.0,          kappa_- * ell = 1.0
+
+Observación 9 (Familia de Hayward: temperatura máxima en dimensión arbitraria):
+    T / T_H^max = (3 * sqrt(3) * sqrt((D - 1) / (D - 3))) / (D - 3)  (10)
+Vale 9 en D = 4, sqrt(5) en D = 6 y exactamente 1 en D = 9 (único cero entero de (D - 3)^3 = 27(D - 1)).
+
+6. Alcance del resultado
+Lo que afirma: Que la geometría límite de dos configuraciones gravitatorias muy distintas está fijada por una única cota sobre la densidad del sector material, que el valor coincide, y que ello vale en cualquier dimensión.
+Lo que no afirma:
+1. No es un resultado de completitud geodésica (teorema BGV aplica).
+2. La cota gobierna el sector electromagnético, no la densidad total.
+3. No hay rebote cosmológico; el escenario es asintóticamente de Sitter en el pasado (universo emergente).
+4. kappa_- = H_dS es asintótica, cuantificada en forma cerrada por la Proposición 7.
+5. No hay firma observable a bajas energías (desviaciones en el exterior escalan como (ell / r_s)^3).
+6. Inestabilidad de perturbaciones de campo vectorial (De Felice y Tsujikawa c_Omega^2 -> -5/2 en el centro; teoremas de Russo-Townsend).
+7. Mantiene o no el límite de Maxwell según la teoría considerada.
+================================================================================

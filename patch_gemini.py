@@ -1,30 +1,29 @@
-with open('app/src/main/java/com/example/manager/GeminiService.kt', 'r') as f:
+with open("app/src/main/java/com/example/manager/GeminiService.kt", "r") as f:
     content = f.read()
 
-old_req = """data class GenerateContentRequest(
-    val contents: List<Content>,
-    @field:Json(name = "system_instruction")
-    val systemInstruction: Content? = null,
-    val tools: List<Tool>? = null
-)"""
+new_client = """
+object GeminiClient {
+    suspend fun generateContentSafe(
+        apiKey: String,
+        request: GenerateContentRequest,
+        priority: com.example.net.ApiPriority
+    ): Result<String> {
+        return com.example.net.RetryPolicy.executeWithRetry(
+            provider = com.example.net.ApiProvider.GEMINI,
+            priority = priority
+        ) {
+            val response = RetrofitClient.service.generateContent(apiKey, request)
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text 
+                ?: throw Exception("Respuesta vacía o formato inválido de Gemini")
+        }
+    }
+}
+"""
 
-new_req = """data class GenerateContentRequest(
-    val contents: List<Content>,
-    @field:Json(name = "system_instruction")
-    val systemInstruction: Content? = null,
-    val tools: List<Tool>? = null,
-    val generationConfig: GenerationConfig? = null
-)
-
-data class GenerationConfig(
-    val temperature: Double? = null,
-    val topP: Double? = null,
-    val topK: Int? = null,
-    @field:Json(name = "stop_sequences")
-    val stopSequences: List<String>? = null
-)"""
-
-content = content.replace(old_req, new_req)
-
-with open('app/src/main/java/com/example/manager/GeminiService.kt', 'w') as f:
-    f.write(content)
+if "object GeminiClient" not in content:
+    content = content + new_client
+    with open("app/src/main/java/com/example/manager/GeminiService.kt", "w") as f:
+        f.write(content)
+        print("Patched GeminiService")
+else:
+    print("Already patched")

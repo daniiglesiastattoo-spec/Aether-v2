@@ -92,3 +92,20 @@ object RetrofitClient {
             .create(GeminiApiService::class.java)
     }
 }
+
+object GeminiClient {
+    suspend fun generateContentSafe(
+        apiKey: String,
+        request: GenerateContentRequest,
+        priority: com.example.net.ApiPriority
+    ): Result<String> {
+        return com.example.net.RetryPolicy.executeWithRetry(
+            provider = com.example.net.ApiProvider.GEMINI,
+            priority = priority
+        ) {
+            val response = RetrofitClient.service.generateContent(apiKey, request)
+            response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text 
+                ?: throw Exception("Respuesta vacía o formato inválido de Gemini")
+        }
+    }
+}

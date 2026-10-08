@@ -104,8 +104,9 @@ ${evidence.toString().take(8000)}
                 contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
                 generationConfig = GenerationConfig(temperature = 0.3)
             )
-            val response = RetrofitClient.service.generateContent(apiKey, req)
-            val jsonText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text?.replace(Regex("```(json)?"), "")?.trim() ?: return 0
+            val result = GeminiClient.generateContentSafe(apiKey, req, com.example.net.ApiPriority.BACKGROUND_REFLEXION)
+            if (result.isFailure) return 0
+            val jsonText = result.getOrNull()?.replace(Regex("```(json)?"), "")?.trim() ?: return 0
             
             val startIdx = jsonText.indexOf('{')
             val endIdx = jsonText.lastIndexOf('}')

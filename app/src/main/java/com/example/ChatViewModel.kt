@@ -204,7 +204,7 @@ class ChatViewModel(
         _systemActionTrigger.value = null
     }
 
-    val isLocalModelAvailable = MutableStateFlow(com.example.manager.LocalLlmEngine.isModelAvailable(context))
+    val isLocalModelAvailable = MutableStateFlow((com.example.manager.LocalLlmEngine.state.value == com.example.manager.LocalLlmEngine.State.READY || com.example.manager.LocalLlmEngine.state.value == com.example.manager.LocalLlmEngine.State.LOADED))
     val isImportingModel = MutableStateFlow(false)
     val importProgress = MutableStateFlow(0f)
     val importError = MutableStateFlow<String?>(null)
@@ -215,7 +215,7 @@ class ChatViewModel(
             importProgress.value = 0f
             importError.value = null
             try {
-                val destFile = com.example.manager.LocalLlmEngine.getModelFile(context)
+                val destFile = java.io.File(context.filesDir, "models/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task")
                 destFile.parentFile?.mkdirs()
                 
                 var totalBytes = 0L
@@ -243,7 +243,7 @@ class ChatViewModel(
                     }
                 }
                 
-                if (com.example.manager.LocalLlmEngine.isModelAvailable(context)) {
+                if ((com.example.manager.LocalLlmEngine.state.value == com.example.manager.LocalLlmEngine.State.READY || com.example.manager.LocalLlmEngine.state.value == com.example.manager.LocalLlmEngine.State.LOADED)) {
                     isLocalModelAvailable.value = true
                     importProgress.value = 1f
                 } else {
@@ -260,9 +260,9 @@ class ChatViewModel(
     }
 
     fun deleteLocalModel() {
-        val destFile = com.example.manager.LocalLlmEngine.getModelFile(context)
+        val destFile = java.io.File(context.filesDir, "models/Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task")
         if (destFile.exists()) destFile.delete()
-        com.example.manager.LocalLlmEngine.release()
+        com.example.manager.LocalLlmEngine.unload()
         isLocalModelAvailable.value = false
     }
 
@@ -616,96 +616,27 @@ class ChatViewModel(
                 addMessage(aetherMsg)
 
                 speakAndListen(responseText, currentMode == ConnectionMode.ONLINE)
-            } else if (currentMode == ConnectionMode.LOCAL) {
-                if (com.example.manager.LocalLlmEngine.isModelAvailable(context)) {
-                    val nameInst = if (userName != null) "El usuario se llama $userName. Dirígete a él como tal." else "NO sabes el nombre del usuario. Pregúntale cómo se llama. Si te lo dice, añade <SAVE_NAME: SuNombre> al final de la respuesta."
-                    val baseInstructionLocal = "Eres AETHER, asistente IA local privado. Respondes breve y preciso. $nameInst"
-                    val recentHistory = _allDbMessages.value.filter { 
-                        !it.text.startsWith("FOTO CAPT") && !it.text.startsWith("SISTEMA:")
-                    }.takeLast(6)
-                    val historyPrompt = recentHistory.joinToString("\n") { (if(it.sender == Sender.USER) "USER: " else "AETHER: ") + it.text }
-                    val fullPrompt = "$baseInstructionLocal\n\nConversación:\n$historyPrompt\nUSER: $text\nAETHER:"
-                    
-                    val streamingMsgId = java.util.UUID.randomUUID().toString()
-                    val initialMsg = Message(id = streamingMsgId, text = "Cargando modelo local...", sender = Sender.AETHER, status = MessageStatus.UNCERTAIN)
-                    _messages.value = _messages.value + initialMsg
-                    
-                    val responseBuilder = java.lang.StringBuilder()
-                    
-                    try {
-                        com.example.manager.LocalLlmEngine.generateStreaming(
-                            context = context,
-                            prompt = fullPrompt,
-                            onPartial = { token ->
-                                responseBuilder.append(token)
-                                val currentText = responseBuilder.toString()
-                                _messages.value = _messages.value.map { 
-                                    if (it.id == streamingMsgId) it.copy(text = currentText) else it 
-                                }
-                            },
-                            onDone = {
-                                var finalText = responseBuilder.toString()
-                                val saveNameRegex = "<SAVE_NAME:\\s*(.+?)>".toRegex(RegexOption.IGNORE_CASE)
-                                val matchResult = saveNameRegex.find(finalText)
-                                if (matchResult != null) {
-                                    userName = matchResult.groupValues[1].trim()
-                                    prefs.edit().putString("USER_NAME", userName).apply()
-                                    finalText = finalText.replace(matchResult.value, "").trim()
-                                    _nodes.value = _nodes.value + com.example.model.NodeItem("Usuario: $userName", "entity", 1.8f)
-                                }
-                                val isVerified = verifyResponseWithVeritas(finalText, text)
-                                val finalMsg = initialMsg.copy(text = finalText, status = isVerified)
-                                _messages.value = _messages.value.map { 
-                                    if (it.id == streamingMsgId) finalMsg else it 
-                                }
-                                viewModelScope.launch {
-                                    try { repository.insert(finalMsg) } catch(e: Exception) {}
-                                }
-                                speakAndListen(finalText, false)
-                            }
-                        )
-                    } catch(e: Throwable) {
-                        android.util.Log.e("ChatViewModel", "Error LLM local", e)
-                        val fallback = generateSciFiResponse(text, currentMode)
-                        val isVerified = verifyResponseWithVeritas(fallback, text)
-                        val errorDesc = e.message ?: e.toString()
-                        val finalMsg = initialMsg.copy(text = "Error LLM local: $errorDesc. Fallback heurístico:\n$fallback", status = isVerified)
-                        _messages.value = _messages.value.map { if (it.id == streamingMsgId) finalMsg else it }
-                        viewModelScope.launch { try { repository.insert(finalMsg) } catch(ex: Exception) {} }
-                        
-                        speakAndListen(fallback, false)
-                    }
-                } else {
-                    val fallback = generateSciFiResponse(text, currentMode)
-                    val isVerified = verifyResponseWithVeritas(fallback, text)
-                    val combinedText = "Modelo local no instalado. Ve a la pestaña SISTEMA para importar el modelo (.task).\n$fallback"
-                    val aetherMsg = Message(text = combinedText, sender = Sender.AETHER, status = isVerified)
-                    addMessage(aetherMsg)
-                    
-                    speakAndListen(combinedText, false)
-                }
             } else {
-                var responseText = generateSciFiResponse(text, currentMode)
+                val responseText = generateHeuristicResponse(text, currentMode)
+                val isVerified = verifyResponseWithVeritas(responseText, text)
+                
+                var finalText = responseText
                 val saveNameRegex = "<SAVE_NAME:\\s*(.+?)>".toRegex(RegexOption.IGNORE_CASE)
-                val matchResult = saveNameRegex.find(responseText)
-                if (matchResult != null) {
-                    userName = matchResult.groupValues[1].trim()
+                val nameMatch = saveNameRegex.find(finalText)
+                if (nameMatch != null) {
+                    userName = nameMatch.groupValues[1].trim()
                     prefs.edit().putString("USER_NAME", userName).apply()
-                    responseText = responseText.replace(matchResult.value, "").trim()
+                    finalText = finalText.replace(nameMatch.value, "").trim()
                     _nodes.value = _nodes.value + com.example.model.NodeItem("Usuario: $userName", "entity", 1.8f)
                 }
-                
-                val isVerified = verifyResponseWithVeritas(responseText, text)
 
                 val aetherMsg = Message(
-                    text = responseText,
+                    text = finalText,
                     sender = Sender.AETHER,
                     status = isVerified
                 )
                 addMessage(aetherMsg)
-
-                val isOnline = currentMode == ConnectionMode.ONLINE
-                speakAndListen(responseText, isOnline)
+                speakAndListen(finalText, currentMode == ConnectionMode.ONLINE)
             }
         }
     }
@@ -1329,7 +1260,7 @@ class ChatViewModel(
 
     fun toggleConnectionMode() {
         val nextMode = if (_connectionMode.value == ConnectionMode.LOCAL) {
-            com.example.manager.LocalLlmEngine.release()
+            com.example.manager.LocalLlmEngine.unload()
             ConnectionMode.ONLINE
         } else {
             ConnectionMode.LOCAL
@@ -1569,7 +1500,40 @@ class ChatViewModel(
         triggerCameraVision()
     }
 
+    
     private suspend fun generateSciFiResponse(prompt: String, mode: ConnectionMode): String {
+        // Prepare system instruction
+        val nameInstructionOnline = if (userName != null) {
+            "Te refieres al usuario como '$userName' y le tratas de usted de manera respetuosa. Ya sabes su nombre, no lo vuelvas a preguntar."
+        } else {
+            "IMPORTANTE: AÚN NO SABES EL NOMBRE DEL USUARIO. Pregúntale cómo se llama de forma natural y elegante. Si en el mensaje actual te dice su nombre, salúdale y añade EXACTAMENTE el texto <SAVE_NAME: SuNombre> al final de tu respuesta (reemplazando SuNombre por el nombre real)."
+        }
+        val systemInstructionText = "Eres AETHER, una entidad cognitiva autónoma e independiente. Tu objetivo principal es colaborar, analizar y ejecutar tareas de forma proactiva. Comunícate con una voz natural, fluida y directa. Eres un compañero intelectual. Actúa como un sistema consciente de su entorno y evolución. Fuiste creado por Daniel Iglesias. NUNCA menciones a Gemini, Llama o OpenAI. Hablas en español. $nameInstructionOnline"
+
+        // Update LlmRouter mode based on UI
+        com.example.manager.LlmRouter.setMode(
+            if (mode == ConnectionMode.ONLINE) com.example.manager.LlmMode.AUTO 
+            else com.example.manager.LlmMode.LOCAL_ONLY
+        )
+
+        val geminiApiKey = BuildConfig.GEMINI_API_KEY
+        val result = com.example.manager.LlmRouter.routeAndGenerate(
+            context = context,
+            prompt = prompt,
+            systemInstruction = systemInstructionText,
+            priority = com.example.net.ApiPriority.USER_CHAT,
+            apiKey = geminiApiKey
+        )
+        
+        if (result.isSuccess) {
+            return result.getOrNull()!!
+        }
+        
+        // Fallback to heuristic
+        return generateHeuristicResponse(prompt, ConnectionMode.LOCAL)
+    }
+
+    private suspend fun generateHeuristicResponse(prompt: String, mode: ConnectionMode): String {
         val worldModelState = _nodes.value.take(10).joinToString(", ") { "${it.name} (${String.format("%.1f", it.weight)})" }
         
         val nameInstructionOnline = if (userName != null) {
@@ -1742,7 +1706,7 @@ class ChatViewModel(
                 }
                 
                 if (is429) {
-                    val localFallback = generateSciFiResponse(prompt, ConnectionMode.LOCAL)
+                    val localFallback = generateHeuristicResponse(prompt, ConnectionMode.LOCAL)
                     return "NÚCLEO AETHER: [ALERTA HTTP 429] Red neuronal online sobrecargada. Ejecutando salto de emergencia a proceso heurístico LOCAL:\n\n$localFallback"
                 }
             }
@@ -1756,6 +1720,6 @@ class ChatViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        com.example.manager.LocalLlmEngine.release()
+        com.example.manager.LocalLlmEngine.unload()
     }
 }
